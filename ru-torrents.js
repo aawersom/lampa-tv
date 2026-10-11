@@ -13,7 +13,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.2.0';
+    window.lampa_tv_ru_torrents = '1.2.1';
 
     var KEY = 'RuSeeders';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -91,7 +91,8 @@
                 try {
                     process(json, params);
                     // the torrents component keeps exactly this object as its `results`
-                    if (params && typeof params === 'object') params.__ruJson = json;
+                    // non-enumerable: Lampa serialises the activity object into localStorage
+                    if (params && typeof params === 'object') Object.defineProperty(params, '__ruJson', { value: json, writable: true, configurable: true, enumerable: false });
                 } catch (e) { console.log('RuTorrents', 'process error', e && e.message); }
                 oncomplite(json);
             }, onerror);
