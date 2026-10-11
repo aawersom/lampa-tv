@@ -1,9 +1,9 @@
 /*
  * Lampa: русские раздачи — owner's TV tweak (Lampa 3.x, internal torrent client).
- * 1) Hides releases found ONLY on foreign trackers (piratebay, yts, knaben, 1337x, …).
- *    A release present on any Russian/Ukrainian tracker stays.
+ * 1) Nothing is hidden: all parsers, all releases. Each release (row) is ranked on its own.
+ *    Russian = Russian audio in track info, or (no track info and on a Russian/Ukrainian tracker).
  * 2) Sort key `RuSeeders` (selected as the default torrents sort):
- *      releases WITH Russian audio (or unknown) first,
+ *      Russian releases first, then the rest,
  *      then releases whose year matches the film's year (wrong films with a similar title sink),
  *      then by seeders, descending.
  * Lampa's own sort is `items.sort` descending by item[torrents_sort] (interaction/filter.js),
@@ -12,7 +12,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.0.0';
+    window.lampa_tv_ru_torrents = '1.1.0';
 
     var KEY = 'RuSeeders';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -35,7 +35,7 @@
         return true;
     }
 
-    // 1 = Russian audio present or unknown, 0 = track info says there is no Russian audio
+    // 2 = track info shows Russian audio, 1 = unknown (no track info), 0 = track info says no Russian audio
     function ruAudio(x) {
         var p = x.ffprobe;
         if (!p || !p.length) return 1;
@@ -45,7 +45,7 @@
             var tags = audio[i].tags || {};
             var lang = String(tags.language || '').toLowerCase();
             var title = String(tags.title || '').toLowerCase();
-            if (lang === 'rus' || lang === 'ru' || /рус|дубл|многоголос|одноголос|двухголос|russian/.test(title)) return 1;
+            if (lang === 'rus' || lang === 'ru' || /рус|дубл|многоголос|одноголос|двухголос|russian/.test(title)) return 2;
         }
         return 0;
     }
@@ -64,14 +64,21 @@
         return best;
     }
 
+    // Russian release = Russian audio known, or (audio unknown AND the release is on a Russian/Ukrainian tracker)
+    function russian(x) {
+        var a = ruAudio(x);
+        if (a === 2) return 1;
+        if (a === 0) return 0;
+        return foreignOnly(x) ? 0 : 1;
+    }
+
     function process(json, params) {
         if (!json || !json.Results || !json.Results.length) return;
-        json.Results = json.Results.filter(function (x) { return !foreignOnly(x); });
         var movie = (params && params.movie) || {};
         var year = parseInt(String(movie.release_date || movie.first_air_date || '').slice(0, 4), 10) || 0;
         var serial = !!(movie.number_of_seasons || movie.original_name);
         json.Results.forEach(function (x) {
-            x[KEY] = ruAudio(x) * 1e10 + yearRank(x, year, serial) * 1e9 + (parseInt(x.Seeders, 10) || 0);
+            x[KEY] = russian(x) * 1e10 + yearRank(x, year, serial) * 1e9 + (parseInt(x.Seeders, 10) || 0);
         });
     }
 
