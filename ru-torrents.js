@@ -1,6 +1,7 @@
 /*
  * Lampa: русские раздачи — owner's TV tweak (Lampa 3.x, internal torrent client).
  * 1) Nothing is hidden: all parsers, all releases. Each release (row) is ranked on its own.
+ *    The same torrent (same btih) found by both parsers becomes one row with all its trackers.
  *    Russian = Russian audio in track info, or (no track info and on a Russian/Ukrainian tracker).
  * 2) Sort key `RuSeeders` (selected as the default torrents sort):
  *      Russian releases first, then the rest,
@@ -13,7 +14,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.2.1';
+    window.lampa_tv_ru_torrents = '1.3.0';
 
     var KEY = 'RuSeeders';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -73,8 +74,35 @@
         return foreignOnly(x) ? 0 : 1;
     }
 
+    function btih(x) {
+        var m = /btih:([a-z0-9]+)/i.exec(String(x.MagnetUri || ''));
+        return m ? m[1].toLowerCase() : '';
+    }
+
+    // One torrent (same btih) reported by both parsers → one row: union of trackers, the larger
+    // seeders/peers (both parsers count the same trackers, so summing would count them twice),
+    // track info and «opened» mark from whichever copy has them. Different torrents never merge.
+    function mergeSame(list) {
+        var seen = {}, out = [];
+        list.forEach(function (x) {
+            var h = btih(x);
+            if (!h) { out.push(x); return; }
+            var base = seen[h];
+            if (!base) { seen[h] = x; out.push(x); return; }
+            var tr = trackers(base);
+            trackers(x).forEach(function (t) { if (tr.indexOf(t) < 0) tr.push(t); });
+            base.Tracker = tr.join(', ');
+            base.Seeders = Math.max(parseInt(base.Seeders, 10) || 0, parseInt(x.Seeders, 10) || 0);
+            base.Peers = Math.max(parseInt(base.Peers, 10) || 0, parseInt(x.Peers, 10) || 0);
+            if ((!base.ffprobe || !base.ffprobe.length) && x.ffprobe && x.ffprobe.length) base.ffprobe = x.ffprobe;
+            if (x.viewed) base.viewed = true;
+        });
+        return out;
+    }
+
     function process(json, params) {
         if (!json || !json.Results || !json.Results.length) return;
+        json.Results = mergeSame(json.Results);
         var movie = (params && params.movie) || {};
         var year = parseInt(String(movie.release_date || movie.first_air_date || '').slice(0, 4), 10) || 0;
         var serial = !!(movie.number_of_seasons || movie.original_name);
