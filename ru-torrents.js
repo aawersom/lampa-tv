@@ -7,12 +7,13 @@
  *      then releases whose year matches the film's year (wrong films with a similar title sink),
  *      then by seeders, descending.
  * Lampa's own sort is `items.sort` descending by item[torrents_sort] (interaction/filter.js),
- * so a computed numeric field is enough — no Lampa internals are patched except Parser.get's callback.
+ * so a computed numeric field is enough. Patched: Parser.get callback (adds the key) and the torrents
+ * component's sortWithViewed (already-opened releases stay pinned on top, but also Russian-first).
  */
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.1.0';
+    window.lampa_tv_ru_torrents = '1.2.0';
 
     var KEY = 'RuSeeders';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -87,12 +88,39 @@
         var orig = Lampa.Parser.get;
         var wrapped = function (params, oncomplite, onerror) {
             return orig.call(this, params, function (json) {
-                try { process(json, params); } catch (e) { console.log('RuTorrents', 'process error', e && e.message); }
+                try {
+                    process(json, params);
+                    // the torrents component keeps exactly this object as its `results`
+                    if (params && typeof params === 'object') params.__ruJson = json;
+                } catch (e) { console.log('RuTorrents', 'process error', e && e.message); }
                 oncomplite(json);
             }, onerror);
         };
         wrapped.__ruTorrents = true;
         Lampa.Parser.get = wrapped;
+
+        // Lampa pins already-opened releases on top, ordered by seeders only (components/torrents.js
+        // sortWithViewed). Keep the pin, but order the pinned ones by our key too.
+        var Orig = Lampa.Component && Lampa.Component.get && Lampa.Component.get('torrents');
+        if (Orig && !Orig.__ruTorrents) {
+            var Comp = function (object) {
+                Orig.call(this, object);
+                var base = this.sortWithViewed;
+                if (typeof base !== 'function') return;
+                this.sortWithViewed = function () {
+                    base.apply(this, arguments);
+                    var r = object && object.__ruJson;
+                    if (!r || !r.Results || Lampa.Storage.get('torrents_sort', '') !== KEY) return;
+                    var pinned = [], other = [];
+                    r.Results.forEach(function (a) { (a.viewed ? pinned : other).push(a); });
+                    pinned.sort(function (a, b) { return (b[KEY] || 0) - (a[KEY] || 0); });
+                    r.Results = pinned.concat(other);
+                };
+            };
+            Comp.prototype = Orig.prototype;
+            Comp.__ruTorrents = true;
+            Lampa.Component.add('torrents', Comp);
+        }
 
         // default sort: our key replaces plain «по сидам» / «популярные»; other manual choices are kept
         var s = Lampa.Storage.get('torrents_sort', 'popular');
