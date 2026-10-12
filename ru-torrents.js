@@ -9,13 +9,14 @@
  *    inside each group the chosen sort stays (default «Популярное»: films by seeders,
  *    series latest season first). Russian = Russian audio in track info, or (no track info and
  *    on a Russian/Ukrainian tracker).
+ * 3) A film without its own filter starts unfiltered (Lampa would reuse the last filter chosen for any film).
  * Patched: Parser.get callback (merge + rank) and the torrents component's sortWithViewed, which Lampa
  * calls after every sort (components/torrents.js sortResults). Already-opened releases stay pinned on top.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.5.0';
+    window.lampa_tv_ru_torrents = '1.6.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -142,6 +143,11 @@
         if (Orig && !Orig.__ruTorrents) {
             var Comp = function (object) {
                 Orig.call(this, object);
+                // a film without its own filter starts unfiltered (Lampa falls back to the last filter used anywhere)
+                this.getFilterData = function () {
+                    var all = Lampa.Storage.get('torrents_filter_data', '{}') || {};
+                    return all[this.cardID()] || {};
+                };
                 var base = this.sortWithViewed;
                 if (typeof base !== 'function') return;
                 this.sortWithViewed = function () {
