@@ -1,22 +1,22 @@
 /*
  * Lampa: русские раздачи — owner's TV tweak (Lampa 3.x, internal torrent client).
- * 1) Nothing is hidden: all parsers, all releases. Each release (row) is ranked on its own.
- *    The same torrent (same btih) found by both parsers becomes one row with all its trackers.
- *    Russian = Russian audio in track info, or (no track info and on a Russian/Ukrainian tracker).
- * 2) Sort key `RuSeeders` (selected as the default torrents sort):
+ * Nothing is hidden: all parsers, all releases. Each release (row) is ranked on its own.
+ * 1) The same torrent (same btih) found by both parsers becomes one row with all its trackers.
+ * 2) Whatever sort is chosen in «Сортировать», on top of it:
  *      Russian releases first, then the rest,
- *      then releases whose year matches the film's year (wrong films with a similar title sink),
- *      then by seeders, descending.
- * Lampa's own sort is `items.sort` descending by item[torrents_sort] (interaction/filter.js),
- * so a computed numeric field is enough. Patched: Parser.get callback (adds the key) and the torrents
- * component's sortWithViewed (already-opened releases stay pinned on top, but also Russian-first).
+ *      then releases whose year matches the film's year (wrong films with a similar title sink);
+ *    inside each group the chosen sort stays (default «Популярное»: films by seeders,
+ *    series latest season first). Russian = Russian audio in track info, or (no track info and
+ *    on a Russian/Ukrainian tracker).
+ * Patched: Parser.get callback (merge + rank) and the torrents component's sortWithViewed, which Lampa
+ * calls after every sort (components/torrents.js sortResults). Already-opened releases stay pinned on top.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.3.0';
+    window.lampa_tv_ru_torrents = '1.4.0';
 
-    var KEY = 'RuSeeders';
+    var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
         'nyaa', 'limetorrents', 'torlock', 'kickass', 'magnetdl', 'bitsearch', 'solidtorrents', 'glodls', 'zooqle',
         'btdig', 'torrentdownloads', 'idope', 'extratorrent', 'yourbittorrent', 'bt4g', 'therarbg'];
@@ -106,9 +106,7 @@
         var movie = (params && params.movie) || {};
         var year = parseInt(String(movie.release_date || movie.first_air_date || '').slice(0, 4), 10) || 0;
         var serial = !!(movie.number_of_seasons || movie.original_name);
-        json.Results.forEach(function (x) {
-            x[KEY] = russian(x) * 1e10 + yearRank(x, year, serial) * 1e9 + (parseInt(x.Seeders, 10) || 0);
-        });
+        json.Results.forEach(function (x) { x[RANK] = russian(x) * 3 + yearRank(x, year, serial); });
     }
 
     function patch() {
@@ -128,8 +126,8 @@
         wrapped.__ruTorrents = true;
         Lampa.Parser.get = wrapped;
 
-        // Lampa pins already-opened releases on top, ordered by seeders only (components/torrents.js
-        // sortWithViewed). Keep the pin, but order the pinned ones by our key too.
+        // Lampa ends every sort with sortWithViewed (already-opened releases pinned on top). After it:
+        // keep the pin, then our rank, then the chosen sort's own order (index = stable tie-break).
         var Orig = Lampa.Component && Lampa.Component.get && Lampa.Component.get('torrents');
         if (Orig && !Orig.__ruTorrents) {
             var Comp = function (object) {
@@ -139,11 +137,10 @@
                 this.sortWithViewed = function () {
                     base.apply(this, arguments);
                     var r = object && object.__ruJson;
-                    if (!r || !r.Results || Lampa.Storage.get('torrents_sort', '') !== KEY) return;
-                    var pinned = [], other = [];
-                    r.Results.forEach(function (a) { (a.viewed ? pinned : other).push(a); });
-                    pinned.sort(function (a, b) { return (b[KEY] || 0) - (a[KEY] || 0); });
-                    r.Results = pinned.concat(other);
+                    if (!r || !r.Results) return;
+                    r.Results = r.Results.map(function (a, i) { return { a: a, i: i }; }).sort(function (x, y) {
+                        return (y.a.viewed ? 1 : 0) - (x.a.viewed ? 1 : 0) || (y.a[RANK] || 0) - (x.a[RANK] || 0) || x.i - y.i;
+                    }).map(function (x) { return x.a; });
                 };
             };
             Comp.prototype = Orig.prototype;
@@ -151,9 +148,8 @@
             Lampa.Component.add('torrents', Comp);
         }
 
-        // default sort: our key replaces plain «по сидам» / «популярные»; other manual choices are kept
-        var s = Lampa.Storage.get('torrents_sort', 'popular');
-        if (s === 'Seeders' || s === 'popular') Lampa.Storage.set('torrents_sort', KEY);
+        // 1.0–1.3 used their own sort key, which Lampa's sort menu doesn't list → back to Lampa's default
+        if (Lampa.Storage.get('torrents_sort', 'popular') === 'RuSeeders') Lampa.Storage.set('torrents_sort', 'popular');
 
         console.log('RuTorrents', 'ready', window.lampa_tv_ru_torrents);
         return true;
