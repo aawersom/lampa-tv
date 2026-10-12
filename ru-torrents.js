@@ -1,7 +1,8 @@
 /*
  * Lampa: русские раздачи — owner's TV tweak (Lampa 3.x, internal torrent client).
  * Nothing is hidden: all parsers, all releases. Each release (row) is ranked on its own.
- * 1) The same torrent (same btih) found by both parsers becomes one row with all its trackers.
+ * 1) The same torrent (same btih) found by both parsers becomes one row with all its trackers
+ *    and the announce URLs of both magnets (one swarm: TorrServer asks every tracker for peers).
  * 2) Whatever sort is chosen in «Сортировать», on top of it:
  *      Russian releases first, then the rest,
  *      then releases whose year matches the film's year (wrong films with a similar title sink);
@@ -14,7 +15,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.4.0';
+    window.lampa_tv_ru_torrents = '1.5.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -79,6 +80,10 @@
         return m ? m[1].toLowerCase() : '';
     }
 
+    function announces(magnet) {
+        return (String(magnet || '').match(/[?&]tr=[^&]*/g) || []).map(function (s) { return s.slice(1); });
+    }
+
     // One torrent (same btih) reported by both parsers → one row: union of trackers, the larger
     // seeders/peers (both parsers count the same trackers, so summing would count them twice),
     // track info and «opened» mark from whichever copy has them. Different torrents never merge.
@@ -92,6 +97,11 @@
             var tr = trackers(base);
             trackers(x).forEach(function (t) { if (tr.indexOf(t) < 0) tr.push(t); });
             base.Tracker = tr.join(', ');
+            // one swarm: TorrServer gets the announce URLs of both copies (more trackers → more peers found)
+            var ann = announces(base.MagnetUri);
+            announces(x.MagnetUri).forEach(function (a) {
+                if (ann.indexOf(a) < 0) { ann.push(a); base.MagnetUri += '&' + a; }
+            });
             base.Seeders = Math.max(parseInt(base.Seeders, 10) || 0, parseInt(x.Seeders, 10) || 0);
             base.Peers = Math.max(parseInt(base.Peers, 10) || 0, parseInt(x.Peers, 10) || 0);
             if ((!base.ffprobe || !base.ffprobe.length) && x.ffprobe && x.ffprobe.length) base.ffprobe = x.ffprobe;
