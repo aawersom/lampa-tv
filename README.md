@@ -10,3 +10,5 @@ Small Lampa 3.x plugins for the owner's TV.
 - `hide-kp.js` — hides the Kinopoisk rating badge on the movie card; IMDb and TMDB stay.
 - `similar.js` — bottom of a movie/series card: «Похожие» (shared TMDB themes + the director), cleaned «Рекомендации»,
   «Зрители IMDb смотрят также» (IMDb «More like this»); «Коллекция» unchanged; no title shown twice.
+- `quick-start.js` — a film's file starts at once (no 10 s countdown; film/series taken from the card, not the file name);
+  in a series the focus goes to the next episode; Lampa stops waiting for TorrServer's preload once ~10 s of that video are buffered.
