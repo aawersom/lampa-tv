@@ -1,20 +1,27 @@
 /*
- * Lampa: open cards blocked on copyright-holder request — owner's TV tweak (Lampa 3.x).
- * Lampa hides such cards two ways:
+ * Lampa: no content restrictions — owner's TV tweak (Lampa 3.x). Owner: «снимаем все ограничения полностью».
+ * Copyright-holder blocks, two ways in Lampa:
  *   1) window.lampa_settings.dcma — a list of blocked ids loaded from CUB; Api.full refuses them (utils dcma());
  *   2) CUB answers the card details with a stub {blocked: true}; the card shows «недоступно» (components/full).
- * Here: the list is always empty, and a stubbed card gets its details straight from TMDB (the CUB TMDB proxy
- * would answer with the same stub). Cards hidden by the LGBT setting are left alone.
+ *   → the list reads as empty; a stubbed card gets its details straight from TMDB (the CUB TMDB proxy
+ *     would answer with the same stub).
+ * LGBT filter: Lampa marks a card by CUB's list or TMDB keywords (on by setting or by a RU/BY IP) and blocks it,
+ *   blurs its poster. Every check needs window.lampa_settings.lgbt (the list) → it reads as empty, and the list
+ *   is never downloaded (disable_features.lgbt — what cub.red/plugin/lgbt did; that plugin is no longer needed).
  */
 (function () {
     'use strict';
     if (window.lampa_tv_no_dmca) return;
-    window.lampa_tv_no_dmca = '1.0.0';
+    window.lampa_tv_no_dmca = '1.1.0';
 
     window.lampa_settings = window.lampa_settings || {};
-    try {
-        Object.defineProperty(window.lampa_settings, 'dcma', { get: function () { return false; }, set: function () {}, configurable: true });
-    } catch (e) { window.lampa_settings.dcma = false; }
+    window.lampa_settings.disable_features = window.lampa_settings.disable_features || {};
+    window.lampa_settings.disable_features.lgbt = true;
+    ['dcma', 'lgbt'].forEach(function (name) {
+        try {
+            Object.defineProperty(window.lampa_settings, name, { get: function () { return false; }, set: function () {}, configurable: true });
+        } catch (e) { window.lampa_settings[name] = false; }
+    });
 
     var APPEND = 'content_ratings,release_dates,external_ids,keywords,alternative_titles,images';
 
@@ -35,7 +42,7 @@
         var full = function (params, oncomplite, onerror) {
             return orig.call(this, params, function (data) {
                 var movie = data && data.movie;
-                if (!movie || !movie.blocked || movie.lgbt) return oncomplite(data);
+                if (!movie || !movie.blocked) return oncomplite(data);
                 console.log('NoDMCA', 'stub from CUB, details from TMDB:', params.method, params.id);
                 fromTmdb(params, function (json) {
                     if (json) { json.source = movie.source || 'tmdb'; data.movie = json; }
