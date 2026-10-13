@@ -12,3 +12,5 @@ Small Lampa 3.x plugins for the owner's TV.
   «Зрители IMDb смотрят также» (IMDb «More like this»); «Коллекция» unchanged; no title shown twice.
 - `quick-start.js` — a film's file starts at once (no 10 s countdown; film/series taken from the card, not the file name);
   in a series the focus goes to the next episode; Lampa stops waiting for TorrServer's preload once ~10 s of that video are buffered.
+- `no-dmca.js` — cards blocked «по требованию правообладателя» open: Lampa's blocked-id list is ignored, a CUB stub
+  is replaced with the card details straight from TMDB. Own small version of the idea of levende's anti-dmca.js.
