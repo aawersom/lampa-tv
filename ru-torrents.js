@@ -10,13 +10,14 @@
  *    series latest season first). Russian = Russian audio in track info, or (no track info and
  *    on a Russian/Ukrainian tracker).
  * 3) A film without its own filter starts unfiltered (Lampa would reuse the last filter chosen for any film).
+ * 4) Opening a card already asks the parsers; its «Торренты» list then opens with that answer (one kept, see below).
  * Patched: Parser.get callback (merge + rank) and the torrents component's sortWithViewed, which Lampa
  * calls after every sort (components/torrents.js sortResults). Already-opened releases stay pinned on top.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.6.0';
+    window.lampa_tv_ru_torrents = '1.7.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -120,20 +121,70 @@
         json.Results.forEach(function (x) { x[RANK] = russian(x) * 3 + yearRank(x, year, serial); });
     }
 
+    // 4) Prefetch. One answer is kept: the last opened card's, until it is used, the card is closed or 5 minutes pass
+    //    (viewed marks inside it stay fresh). Opening another card replaces it.
+    var PREFETCH_TTL = 5 * 60 * 1000;
+    var prefetched = null;
+
+    function searchKey(params) { return params && params.movie ? params.movie.id + '|' + params.search : ''; }
+
+    function finish(p) { p.done = true; p.waiters.splice(0).forEach(function (f) { f(); }); }
+
+    // the same search string the card's «Торренты» button builds (components/full start.js, setting parse_lang)
+    function buttonSearch(card) {
+        var year = ((card.first_air_date || card.release_date || '0000') + '').slice(0, 4);
+        var t = card.title, o = card.original_title;
+        return {
+            df: o, df_year: o + ' ' + year, df_lg: o + ' ' + t, df_lg_year: o + ' ' + t + ' ' + year,
+            lg: t, lg_year: t + ' ' + year, lg_df: t + ' ' + o, lg_df_year: t + ' ' + o + ' ' + year
+        }[Lampa.Storage.field('parse_lang')];
+    }
+
     function patch() {
         if (!window.Lampa || !Lampa.Parser || !Lampa.Parser.get || Lampa.Parser.get.__ruTorrents) return false;
         var orig = Lampa.Parser.get;
-        var wrapped = function (params, oncomplite, onerror) {
-            return orig.call(this, params, function (json) {
-                try {
-                    process(json, params);
-                    // the torrents component keeps exactly this object as its `results`
-                    // non-enumerable: Lampa serialises the activity object into localStorage
-                    if (params && typeof params === 'object') Object.defineProperty(params, '__ruJson', { value: json, writable: true, configurable: true, enumerable: false });
-                } catch (e) { console.log('RuTorrents', 'process error', e && e.message); }
+
+        // the torrents component keeps exactly this object as its `results`
+        // non-enumerable: Lampa serialises the activity object into localStorage
+        function attach(params, json) {
+            if (params && typeof params === 'object') Object.defineProperty(params, '__ruJson', { value: json, writable: true, configurable: true, enumerable: false });
+        }
+
+        function run(params, oncomplite, onerror) {
+            return orig.call(Lampa.Parser, params, function (json) {
+                try { process(json, params); attach(params, json); } catch (e) { console.log('RuTorrents', 'process error', e && e.message); }
                 oncomplite(json);
             }, onerror);
+        }
+
+        var wrapped = function (params, oncomplite, onerror) {
+            var p = prefetched;
+            if (p && !params.from_search && searchKey(params) === p.key && Date.now() - p.time < PREFETCH_TTL) {
+                prefetched = null;
+                var serve = function () {
+                    if (!p.json) return run(params, oncomplite, onerror); // the prefetch failed — ask again
+                    attach(params, p.json);
+                    oncomplite(p.json);
+                };
+                if (p.done) setTimeout(serve, 0); else p.waiters.push(serve);
+                return;
+            }
+            return run(params, oncomplite, onerror);
         };
+
+        // the card opened → ask the parsers what its «Торренты» button will ask (components/full start.js)
+        Lampa.Listener.follow('full', function (e) {
+            if (e.type !== 'complite' || !e.data || !e.data.movie || !Lampa.Storage.field('parser_use')) return;
+            var card = e.data.movie;
+            var params = { url: '', component: 'torrents', search: buttonSearch(card), search_one: card.title, search_two: card.original_title, movie: card, page: 1 };
+            var p = prefetched = { key: searchKey(params), id: card.id, time: Date.now(), done: false, json: null, waiters: [] };
+            run(params, function (json) { p.json = json; finish(p); }, function () { finish(p); });
+        });
+
+        // the card closed (back from it, not into its torrents) → drop its answer
+        Lampa.Listener.follow('activity', function (e) {
+            if (e.type === 'destroy' && e.component === 'full' && prefetched && e.object && e.object.id == prefetched.id) prefetched = null;
+        });
         wrapped.__ruTorrents = true;
         Lampa.Parser.get = wrapped;
 
