@@ -6,13 +6,13 @@
  *   «Рекомендации»                — TMDB recommendations without obscure titles (< 50 votes) and without repeats;
  *   «Зрители IMDb смотрят также»  — IMDb «More like this», mapped to TMDB cards.
  * «Коллекция» (the franchise) stays as Lampa builds it; a title is never shown twice.
- * Computed in the background after the card opens (opening is not delayed). Lampa appends the bottom rows
+ * Computed in the background once the viewer starts scrolling the card (opening is not delayed). Lampa appends the bottom rows
  * lazily while scrolling (components/full onScroll), so the not-yet-built rows are swapped in place.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_similar) return;
-    window.lampa_tv_similar = '1.0.0';
+    window.lampa_tv_similar = '1.1.0';
 
     var IMDB = 'https://caching.graphql.imdb.com/';
     var IMDB_HEADERS = { 'Content-Type': 'application/json', 'x-imdb-client-name': 'imdb-web-next-localized', 'x-imdb-user-country': 'US', 'x-imdb-user-language': 'en-US' };
@@ -145,12 +145,27 @@
         });
     }
 
-    Lampa.Listener.follow('full', function (e) {
-        if (e.type !== 'complite' || !e.data || !e.data.movie || !e.link) return;
+    // Work only for a viewer who scrolls: the card is complete with its first rows built, and every row Lampa
+    // builds after that comes from scrolling (components/full onScroll). Pressing «Смотреть» costs no requests.
+    // The rows of a card seen this session are kept.
+    var waiting = null;
+    var done = {};
+
+    function start(e) {
         var method = (e.object && e.object.method === 'tv') || e.data.movie.number_of_seasons ? 'tv' : 'movie';
+        var key = method + e.data.movie.id;
+        if (done[key]) return swap(e, done[key]);
         try {
-            build(e, method, function (rows) { try { swap(e, rows); } catch (err) { console.log('Similar', 'swap', err && err.message); } });
+            build(e, method, function (rows) {
+                done[key] = rows;
+                try { swap(e, rows); } catch (err) { console.log('Similar', 'swap', err && err.message); }
+            });
         } catch (err) { console.log('Similar', 'build', err && err.message); }
+    }
+
+    Lampa.Listener.follow('full', function (e) {
+        if (e.type === 'complite' && e.data && e.data.movie && e.link) waiting = e;
+        else if (e.type === 'build' && waiting && e.link === waiting.link) { var w = waiting; waiting = null; start(w); }
     });
 
     console.log('Similar', 'ready', window.lampa_tv_similar);
