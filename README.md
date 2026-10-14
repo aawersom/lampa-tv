@@ -15,3 +15,5 @@ Small Lampa 3.x plugins for the owner's TV.
   in a series the focus goes to the next episode; Lampa stops waiting for TorrServer's preload once ~10 s of that video are buffered.
 - `no-dmca.js` — no content restrictions: cards blocked «по требованию правообладателя» open (Lampa's blocked-id list is ignored, a CUB stub
   is replaced with the card details from TMDB); the LGBT filter is off (its list is never loaded).
+- `poster-heal.js` — a poster Lampa gave up on («EE» + URL stub) is loaded again: when Lampa is visible again
+  (after the screensaver / external player), when the network returns, and every 30 s while such stubs exist.
