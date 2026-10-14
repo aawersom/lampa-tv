@@ -17,3 +17,5 @@ Small Lampa 3.x plugins for the owner's TV.
   is replaced with the card details from TMDB); the LGBT filter is off (its list is never loaded).
 - `poster-heal.js` — a poster Lampa gave up on («EE» + URL stub) is loaded again: when Lampa is visible again
   (after the screensaver / external player), when the network returns, and every 30 s while such stubs exist.
+- `no-tv-channels.js` — Lampa stops asking the app to rebuild its Android TV home-screen rows (the app bridge's
+  `updateChannel` is muted, every other bridge call passes); the app's 15-minute timer is stopped separately (appops).
