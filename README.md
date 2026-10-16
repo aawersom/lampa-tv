@@ -20,3 +20,6 @@ Small Lampa 3.x plugins for the owner's TV.
   (after the screensaver / external player), when the network returns, and every 30 s while such stubs exist.
 - `no-tv-channels.js` — Lampa stops asking the app to rebuild its Android TV home-screen rows (the app bridge's
   `updateChannel` is muted, every other bridge call passes); the app's 15-minute timer is stopped separately (appops).
+- `imdb-ratings.js` — poster tiles show the IMDb rating instead of TMDB (card data → cache → OMDb by imdb_id, TMDB external_ids
+  when a list carries none; on-screen tiles only, cached 14 days; no number when IMDb is unknown); on the movie card a known
+  IMDb rating is put back when the ratings plugin hides it after a failed lookup.
