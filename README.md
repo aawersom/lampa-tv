@@ -15,7 +15,7 @@ Small Lampa 3.x plugins for the owner's TV.
   in a series the focus goes to the next episode; Lampa stops waiting for TorrServer's preload once ~10 s of that video are buffered.
 - `no-dmca.js` — no content restrictions: cards blocked «по требованию правообладателя» open (Lampa's blocked-id list is ignored, a CUB stub
   is replaced with the card details from TMDB); the LGBT filter is off (its list is never loaded).
-- `poster-heal.js` — posters come from hosts reachable from Russia and abroad (imagetmdb.com → CUB → nl.imagetmdb.com → image.tmdb.org,
+- `poster-heal.js` — posters come from the hosts fastest from Russian home ISPs, all reachable abroad too (lampa.byskaz.ru → nl.imagetmdb.com → pl.imagetmdb.com → imagetmdb.com → CUB → image.tmdb.org,
   next host after repeated errors); a poster Lampa gave up on («EE» + URL stub) is loaded again, from every host in turn: when Lampa is visible again
   (after the screensaver / external player), when the network returns, and every 30 s while such stubs exist.
 - `no-tv-channels.js` — Lampa stops asking the app to rebuild its Android TV home-screen rows (the app bridge's

@@ -2,10 +2,13 @@
  * Lampa: posters — reachable host first, heal what broke — owner's TV tweak (Lampa 3.x).
  * 1) Hosts. Lampa takes posters from image.tmdb.org unless its geo check (geo.<cub>, at start) says RU/BY and
  *    the TMDB proxy is on. image.tmdb.org is refused from Moscow (check-host.net ru1/ru2, 2026-10-14), and the
- *    geo check does not run again when the TV changes networks. Here posters always come from a host chain that
- *    answered from Moscow, St Petersburg and the VPN alike: imagetmdb.com → imagetmdb.<cub> (CUB's own image
- *    proxy, https) → nl.imagetmdb.com → image.tmdb.org. A host that keeps failing (8 errors in 10 s, reported by
- *    the cards through TMDB.broken) hands over to the next one.
+ *    geo check does not run again when the TV changes networks. Here posters always come from a host chain ordered
+ *    by speed from Russian home ISPs (Globalping MTS, Rostelecom, SkyNet…, two posters, 2026-10-16), all of them
+ *    also fine from Estonia: lampa.byskaz.ru/tmdb/img (Russia, 16–205 ms) → nl.imagetmdb.com (88–253 ms) →
+ *    pl.imagetmdb.com → imagetmdb.com (Cloudflare: 210–495 ms, and Russian ISPs cut Cloudflare answers at 16 KB
+ *    while a w300 poster is 30–50 KB) → imagetmdb.<cub> (400–650 ms) → image.tmdb.org. Not de.imagetmdb.com (hung on
+ *    2 of 5 home probes). A host that keeps failing (8 errors in 10 s, reported by the cards through TMDB.broken)
+ *    hands over to the next one.
  * 2) Heal. A card gives up on its poster for good (components/card onerror: 15-s timer, then «retry» of the same
  *    src counts as another error at once → after 3 the `.card__img-broken` stub with the region code and URL).
  *    The timers keep running while Lampa is frozen behind the screensaver or the external player, so on return a
@@ -16,12 +19,14 @@
 (function () {
     'use strict';
     if (window.lampa_tv_poster_heal) return;
-    window.lampa_tv_poster_heal = '1.1.0';
+    window.lampa_tv_poster_heal = '1.2.0';
 
     // ---- 1) hosts ----
     function hosts() {
         var cub = (window.Lampa && Lampa.Manifest && Lampa.Manifest.cub_domain) || 'cub.black';
-        return ['http://imagetmdb.com/', 'https://imagetmdb.' + cub + '/', 'http://nl.imagetmdb.com/', 'https://image.tmdb.org/'];
+        var list = ['http://lampa.byskaz.ru/tmdb/img/', 'http://nl.imagetmdb.com/', 'http://pl.imagetmdb.com/', 'http://imagetmdb.com/',
+            'https://imagetmdb.' + cub + '/', 'https://image.tmdb.org/'];
+        return location.protocol === 'https:' ? list.filter(function (h) { return h.indexOf('http:') !== 0; }) : list; // no http host on an https page
     }
     var current = 0;
     var errors = [];
