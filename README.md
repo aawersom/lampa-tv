@@ -23,3 +23,7 @@ Small Lampa 3.x plugins for the owner's TV.
 - `imdb-ratings.js` — poster tiles show the IMDb rating instead of TMDB (card data → cache → OMDb by imdb_id, TMDB external_ids
   when a list carries none; on-screen tiles only, cached 14 days; no number when IMDb is unknown); on the movie card a known
   IMDb rating is put back when the ratings plugin hides it after a failed lookup.
+- `tmdb-route.js` — TMDB API from a host this network can reach: every TMDB API request (Lampa's own and plugins' hardcoded
+  api.themoviedb.org URLs, $.ajax and the Android app's native requests) goes to the host picked by asking api.themoviedb.org →
+  lampa.byskaz.ru/tmdb/api → apitmdb.<cub> in turn; picked again at start, when the network returns, when Lampa is visible
+  again and after 3 failed TMDB requests in 15 s.
