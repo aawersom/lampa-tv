@@ -2,6 +2,15 @@
 
 Small Lampa 3.x plugins for the owner's TV.
 
+Installed on the TV (Lampa → Настройки → Расширения): every plugin below except `hide-kp.js` (taken off 2026-10-14,
+the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa keeps only the URLs
+(`https://aawersom.github.io/lampa-tv/<file>.js`) and downloads each plugin at every start with a `reset=<random>`
+parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
+A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
+
+Versions on the TV (2026-10-18): ru-torrents 1.7.0, similar 1.1.0, quick-start 1.0.0, no-dmca 1.1.0, poster-heal 1.2.0,
+no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.1.0.
+
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
   whatever sort is chosen in «Сортировать», Russian releases come first, then the rest; inside each group
   the film's own year first, then the chosen sort (default «Популярное»: films by seeders, series latest season first).
