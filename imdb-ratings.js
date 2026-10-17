@@ -5,6 +5,7 @@
  *    IMDb rating instead: from the card data (CUB lists carry imdb_rating), else from this plugin's cache, else one
  *    OMDb request by imdb_id (the owner's key, set for the ko3ik ratings plugin) — only for tiles that come on screen,
  *    two at a time, cached for 14 days. A tile without a known IMDb rating shows no number (no TMDB fallback).
+ *    The badge colour follows the rating: 8+ green, 7–7.9 light green, 6–6.9 IMDb yellow, 5–5.9 orange, below red.
  * 2) Movie card. Lampa shows the IMDb rating it got from CUB; then the ratings plugin (ko3ik) asks OMDb and, when it
  *    gets nothing (no imdb_id because TMDB is blocked, OMDb error), hides `.rate--imdb` — the rating flashes and
  *    vanishes. Here a hidden IMDb badge is put back with the known value.
@@ -12,7 +13,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_imdb_ratings) return;
-    window.lampa_tv_imdb_ratings = '1.0.0';
+    window.lampa_tv_imdb_ratings = '1.1.0';
 
     var CACHE_KEY = 'lampa_tv_imdb_cache';
     var TTL = 14 * 24 * 3600 * 1000;
@@ -86,7 +87,14 @@
         }
         vote.textContent = value;
         vote.classList.add('card__vote--imdb');
+        vote.setAttribute('data-imdb', tier(value));
         vote.style.display = '';
+    }
+
+    // rating → colour band: 8+ green, 7 light green, 6 IMDb yellow, 5 orange, below red
+    function tier(value) {
+        var r = parseFloat(value);
+        return r >= 8 ? '8' : r >= 7 ? '7' : r >= 6 ? '6' : r >= 5 ? '5' : '0';
     }
 
     function tile(card) {
@@ -148,7 +156,11 @@
     scan(document.body);
 
     var style = document.createElement('style');
-    style.textContent = '.card__vote.card__vote--imdb{background:#f5c518;color:#000;font-weight:700}';
+    style.textContent = '.card__vote.card__vote--imdb{background:#f5c518;color:#000;font-weight:700}' +
+        '.card__vote--imdb[data-imdb="8"]{background:#1e9e4a;color:#fff}' +
+        '.card__vote--imdb[data-imdb="7"]{background:#8bc34a;color:#000}' +
+        '.card__vote--imdb[data-imdb="5"]{background:#ff9800;color:#000}' +
+        '.card__vote--imdb[data-imdb="0"]{background:#e53935;color:#fff}';
     document.head.appendChild(style);
 
     // ---- 2) movie card: keep a known IMDb badge visible ----

@@ -21,7 +21,7 @@ Small Lampa 3.x plugins for the owner's TV.
 - `no-tv-channels.js` — Lampa stops asking the app to rebuild its Android TV home-screen rows (the app bridge's
   `updateChannel` is muted, every other bridge call passes); the app's 15-minute timer is stopped separately (appops).
 - `imdb-ratings.js` — poster tiles show the IMDb rating instead of TMDB (card data → cache → OMDb by imdb_id, TMDB external_ids
-  when a list carries none; on-screen tiles only, cached 14 days; no number when IMDb is unknown); on the movie card a known
+  when a list carries none; on-screen tiles only, cached 14 days; no number when IMDb is unknown; badge colour by rating: 8+ green, 7 light green, 6 yellow, 5 orange, lower red); on the movie card a known
   IMDb rating is put back when the ratings plugin hides it after a failed lookup.
 - `tmdb-route.js` — TMDB API from a host this network can reach: every TMDB API request (Lampa's own and plugins' hardcoded
   api.themoviedb.org URLs, $.ajax and the Android app's native requests) goes to the host picked by asking api.themoviedb.org →
