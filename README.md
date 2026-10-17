@@ -27,3 +27,6 @@ Small Lampa 3.x plugins for the owner's TV.
   api.themoviedb.org URLs, $.ajax and the Android app's native requests) goes to the host picked by asking api.themoviedb.org →
   lampa.byskaz.ru/tmdb/api → tmdb-api.rootu.top → tmdbapi.bylampa.online → apitmdb.cub.best in turn (not apitmdb.cub.black: cache-only, redirects misses to the blocked TMDB); picked again at start, when the network returns, when Lampa is visible
   again and after 3 failed TMDB requests in 15 s.
+- `catalog-next.js` — «Ещё» lists load ahead: two pages as soon as the list opens, and two more whenever the focus gets
+  within 6 rows of the last loaded row (fixes Lampa's list stalling at the end of page 1 when scrolled through quickly:
+  its scroll asks for a page only when it moves, and ignores the first second).
