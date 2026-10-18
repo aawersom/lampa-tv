@@ -18,7 +18,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_catalog_next) return;
-    window.lampa_tv_catalog_next = '1.3.0';
+    window.lampa_tv_catalog_next = '1.3.1';
 
     var AHEAD_ROWS = 6, PAGES = 2;
 
@@ -95,7 +95,8 @@
         (function wait() { // the grid exists only once its first page has come (a slow answer takes seconds)
             var comp = e.object.activity && e.object.activity.component;
             if (isGrid(comp)) {
-                if (!comp.__morePreloaded && comp.object.page === 1) { comp.__morePreloaded = true; more(comp, 1); }
+                // once per list, whatever page it opens on (search «Ещё» starts at page 2, a page picked in «Навигация» at its own)
+                if (!comp.__morePreloaded) { comp.__morePreloaded = true; more(comp, 1); }
                 return;
             }
             if (++tries < 100 && !(comp && comp.destroyed)) setTimeout(wait, 200);
