@@ -12,7 +12,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_imdb_filter) return;
-    window.lampa_tv_imdb_filter = '1.0.1';
+    window.lampa_tv_imdb_filter = '1.0.2';
 
     var SOURCE = 'imdb_filter';
     var PAGE = 20;
@@ -171,15 +171,36 @@
     }
 
     // ---- CUB-only options: CUB's list, the rating applied to the IMDb rating CUB sends ----
+    //      Few titles of a CUB page pass a rating (4K releases by date, IMDb 7.5+: about one in three pages), so CUB pages are
+    //      read in batches until half a page is collected; the next page goes on from where this one stopped.
+    var CUB_BATCH = 5;
     function cubList(params, f, oncomplite, onerror) {
+        var cub = Lampa.Api.sources.cub;
         var url = String(params.url).replace(/([?&])vote=[^&]*&?/, '$1').replace(/[?&]$/, '');
-        Lampa.Api.sources.cub.list(Object.assign({}, params, { url: url, source: 'cub' }), function (json) {
-            if (f.min || f.max) json.results = (json.results || []).filter(function (x) {
-                var r = parseFloat(x.imdb_rating);
-                return r > 0 && (!f.min || r >= f.min) && (!f.max || r <= f.max);
-            });
-            oncomplite(json);
-        }, onerror);
+        if (!f.min && !f.max) return cub.list(Object.assign({}, params, { url: url, source: 'cub' }), oncomplite, onerror);
+        var fits = function (x) { var r = parseFloat(x.imdb_rating); return r > 0 && (!f.min || r >= f.min) && (!f.max || r <= f.max); };
+        var s = searches['cub' + url] = searches['cub' + url] || { from: { 1: 1 }, pages: 0 };
+        var page = parseInt(params.page, 10) || 1, from = s.from[page], out = [], scanned = 0, limit = page === 1 ? 40 : 20;
+        if (!from) return oncomplite({ results: [], page: page, total_pages: page - 1 });
+        (function batch() {
+            var left = CUB_BATCH, got = [], failed = 0;
+            for (var i = 0; i < CUB_BATCH; i++) (function (i) {
+                cub.list(Object.assign({}, params, { url: url, source: 'cub', page: from + i }), function (json) {
+                    if (json.total_pages) s.pages = json.total_pages;
+                    got[i] = (json.results || []).filter(fits);
+                    if (--left === 0) next();
+                }, function () { failed++; got[i] = []; if (--left === 0) next(); });
+            })(i);
+            function next() {
+                if (failed === CUB_BATCH && !out.length) return page > 1 ? oncomplite({ results: [], page: page, total_pages: page - 1 }) : onerror();
+                got.forEach(function (list) { out = out.concat(list); });
+                from += CUB_BATCH; scanned += CUB_BATCH;
+                var more = s.pages ? from <= s.pages : failed === 0;
+                if (more && out.length < PAGE / 2 && scanned < limit) return batch();
+                if (more) s.from[page + 1] = from;
+                oncomplite({ results: out, page: page, total_pages: more ? page + 1 : page, source: 'cub' });
+            }
+        })();
     }
 
     Lampa.Api.sources[SOURCE] = {
