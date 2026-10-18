@@ -2,7 +2,7 @@
  * Lampa: quicker start of a torrent — owner's TV tweak (Lampa 3.x, TorrServer).
  * 1) File list: a film (one video file, or one file holding ≥ 85% of the video bytes — the rest are samples/extras)
  *    starts at once instead of Lampa's 10-second countdown; in a series the focus goes to the episode to watch next
- *    (the one in progress, else the one after the last watched, else the first) — the choice stays with the viewer.
+ *    (the one watched last if unfinished, else the next one; nothing watched → the first) — the choice stays with the viewer.
  * 2) Preload: Lampa waits until TorrServer has PreloadCache % of its cache (one size for every file). Here the wait
  *    ends once ~10 seconds of THIS video are buffered (file size / runtime × 10 s); never more than TorrServer's own
  *    preload size. Done by trimming `preload_size` in TorrServer's `&stat` answers that Lampa polls (torrent.js preload).
@@ -12,7 +12,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.3.0';
+    window.lampa_tv_quick_start = '1.3.1';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -36,14 +36,21 @@
             if (list.length === 1 || (main.element.length || 0) >= total * 0.85) main.item.trigger('hover:enter');
             return;
         }
-        var target = null, lastWatched = -1;
+        // the episode watched LAST (timeline `updated`), unfinished → it, finished → the next one. Not the first unfinished
+        // one: an old half-watched episode pulled the viewer back (owner, 2026-10-18: E01 at 4 % reopened after E04–E05).
+        var target = null, last = null, lastWatched = -1;
         list.forEach(function (r, i) {
-            var p = percent(r.element);
+            var t = r.element.timeline, p = percent(r.element);
+            if (p > 0 && t && t.updated && (!last || t.updated > last.element.timeline.updated)) last = r;
             if (!target && p > 0 && p < 90) target = r;
             if (p >= 90) lastWatched = i;
         });
-        if (!target && lastWatched >= 0 && lastWatched + 1 < list.length) target = list[lastWatched + 1];
-        if (!target && lastWatched < 0) target = list[0]; // nothing watched yet: the first episode, not the season folder row
+        if (last) target = percent(last.element) < 90 ? last : list[list.indexOf(last) + 1] || null;
+        else {
+            // marks without a time (older ones): the first unfinished, else the one after the last finished
+            if (!target && lastWatched >= 0 && lastWatched + 1 < list.length) target = list[lastWatched + 1];
+            if (!target && lastWatched < 0) target = list[0]; // nothing watched yet: the first episode, not the season folder row
+        }
         if (target && Lampa.Modal && Lampa.Modal.scroll) Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
         if (target && play) target.item.trigger('hover:enter');
     }
