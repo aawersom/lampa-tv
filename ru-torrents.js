@@ -14,13 +14,14 @@
  * 5) The release last opened for that card is added to TorrServer while the card is open, so pressing it shows its
  *    files at once (see warmUp).
  * 6) The filter menu is worked out here and handed to Lampa in a few stand-in releases — no freeze on a long list (see filterMenu).
+ * 7) «Продолжить» on the card of a film/series opened before: the file list of the release used last, in one press.
  * Patched: Parser.get callback (merge + rank) and the torrents component's sortWithViewed, which Lampa
  * calls after every sort (components/torrents.js sortResults). Already-opened releases stay pinned on top.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.10.0';
+    window.lampa_tv_ru_torrents = '1.11.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -150,6 +151,8 @@
     //    soon as the card's parser answer is in, and kept alive with a status request every 15 s (TorrServer drops a
     //    torrent nobody reads after 30 s) until the card closes, another release is pressed, the player starts or
     //    WARM_MAX passes. With «Сохранять в базу» on, TorrServer keeps the description and a warm-up takes 2–3 s.
+    //    «Opened before» = the release whose files were opened last for this card (see 7); without that record, the one
+    //    Lampa marked last (torrents_view: order of the FIRST press, so going back to an older release isn't seen there).
     var WARM_MAX = 20 * 60 * 1000;
     var warm = null;
 
@@ -161,11 +164,12 @@
         stopWarm();
         var server = Lampa.Torserver && Lampa.Torserver.url && Lampa.Torserver.url();
         if (!server || !json || !json.Results) return;
-        var view = Lampa.Storage.get('torrents_view', '[]') || [];
+        var last = lastOpened(card), view = Lampa.Storage.get('torrents_view', '[]') || [];
         var best = null, pos = -1;
         json.Results.forEach(function (r) {
-            var i = r.viewed ? view.indexOf(r.hash) : -1;
-            if (i > pos && (r.MagnetUri || r.Link)) { pos = i; best = r; }
+            if (!(r.MagnetUri || r.Link)) return;
+            var i = last && btih(r) === last ? Infinity : r.viewed ? view.indexOf(r.hash) : -1;
+            if (i > pos) { pos = i; best = r; }
         });
         if (!best) return;
         var net = new Lampa.Reguest(); // own request object: Lampa.Torserver's calls clear each other
@@ -182,6 +186,61 @@
             if (warm !== w || Date.now() - w.started > WARM_MAX) return stopWarm();
             if (w.hash) send({ action: 'get', hash: w.hash });
         }, 15000);
+    }
+
+    // 7) «Продолжить». The release whose files were opened last for a card — by any path: a release pressed in
+    //    «Торренты», «Мои торренты», this button — is remembered (torrent hash per card, the last 300 cards). A card with a
+    //    release of its own in TorrServer (data.movie; kept across restarts with «Сохранять в базу») gets «Продолжить» next
+    //    to «Смотреть»: the file list of the remembered release (else the newest one in TorrServer), the way «Мои торренты»
+    //    opens it; quick-start then starts a film or puts the focus on the episode to watch.
+    var LAST_KEY = 'lampa_tv_last_release', LAST_MAX = 300;
+    var CONTINUE_ICON = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M4 4.5v15L15 12z" fill="currentColor"/><rect x="16.5" y="4.5" width="3.5" height="15" rx="1" fill="currentColor"/></svg>';
+
+    function cardKey(card) { return (card.name ? 'tv:' : 'movie:') + card.id; }
+
+    function lastOpened(card) { return (Lampa.Storage.get(LAST_KEY, '{}') || {})[cardKey(card)] || ''; }
+
+    function rememberOpened(card, hash) {
+        var all = Lampa.Storage.get(LAST_KEY, '{}') || {}, key = cardKey(card);
+        if (all[key] === hash && Object.keys(all).pop() === key) return;
+        delete all[key];
+        all[key] = hash; // keys keep insertion order: the oldest go first when the list is full
+        var keys = Object.keys(all);
+        keys.slice(0, Math.max(0, keys.length - LAST_MAX)).forEach(function (k) { delete all[k]; });
+        Lampa.Storage.set(LAST_KEY, all);
+    }
+
+    function continueRelease(card, done) {
+        var url = Lampa.Torserver && Lampa.Torserver.url && Lampa.Torserver.url();
+        if (!url || !card || !card.id) return;
+        var net = new Lampa.Reguest();
+        net.timeout(5000);
+        net.silent(url.replace(/\/$/, '') + '/torrents', function (list) {
+            var last = lastOpened(card), newest = null, remembered = null;
+            (Array.isArray(list) ? list : []).forEach(function (t) {
+                var m = null;
+                try { m = (typeof t.data === 'string' ? JSON.parse(t.data || '{}') : t.data || {}).movie; } catch (err) { /* not Lampa's */ }
+                if (!m || m.id != card.id || !!m.name !== !!card.name) return;
+                if (String(t.hash).toLowerCase() === last) remembered = t;
+                if (!newest || t.timestamp > newest.timestamp) newest = t;
+            });
+            var t = remembered || newest;
+            if (t) done(t.hash);
+        }, function () {}, JSON.stringify({ action: 'list' }));
+    }
+
+    function addContinue(e) {
+        if (e.type !== 'complite' || !e.data || !e.data.movie || !e.object || !e.object.activity) return;
+        var card = e.data.movie, render = e.object.activity.render();
+        continueRelease(card, function (hash) {
+            var play = render.find('.button--play');
+            if (!play.length || render.find('.button--continue').length) return;
+            var btn = $('<div class="full-start__button selector button--continue">' + CONTINUE_ICON + '<span>Продолжить</span></div>');
+            btn.on('hover:enter', function () { Lampa.Torrent.open(hash, card); });
+            play.after(btn);
+            // the card's buttons are collected when it gets the focus; this one comes later
+            if (Lampa.Controller.enabled().name === 'full_start') Lampa.Controller.collectionAppend(btn);
+        });
     }
 
     // 6) Filter menu without the freeze. Lampa builds it (components/torrents.js buildFilterd) by checking every release
@@ -297,6 +356,18 @@
             if (e.type === 'onenter' && warm && e.element && e.element.Title !== warm.title) stopWarm();
         });
         if (Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.follow('start', stopWarm);
+
+        // a file list is shown → remember its release for the card (render comes once per file, one write per list)
+        var shown = '';
+        Lampa.Listener.follow('torrent_file', function (e) {
+            if (e.type === 'list_open') shown = '';
+            if (e.type !== 'render' || !e.element || !e.element.torrent_hash) return;
+            var movie = (e.params && e.params.movie) || e.element.card, hash = String(e.element.torrent_hash).toLowerCase();
+            if (!movie || !movie.id || shown === hash) return;
+            shown = hash;
+            try { rememberOpened(movie, hash); } catch (err) { console.log('RuTorrents', 'remember error', err && err.message); }
+        });
+        Lampa.Listener.follow('full', addContinue);
         wrapped.__ruTorrents = true;
         Lampa.Parser.get = wrapped;
 
