@@ -8,12 +8,13 @@
  *    The badge colour follows the rating: 8+ green, 7–7.9 light green, 6–6.9 IMDb yellow, 5–5.9 orange, below red.
  * 2) Movie card. Lampa shows the IMDb rating it got from CUB; then the ratings plugin (ko3ik) asks OMDb and, when it
  *    gets nothing (no imdb_id because TMDB is blocked, OMDb error), hides `.rate--imdb` — the rating flashes and
- *    vanishes. Here a hidden IMDb badge is put back with the known value.
+ *    vanishes. Here a hidden IMDb badge is put back with the known value. The TMDB badge is not shown (owner, 2026-10-18:
+ *    «TMDB внутри у карточек убери рейтинг»).
  */
 (function () {
     'use strict';
     if (window.lampa_tv_imdb_ratings) return;
-    window.lampa_tv_imdb_ratings = '1.1.0';
+    window.lampa_tv_imdb_ratings = '1.2.0';
 
     var CACHE_KEY = 'lampa_tv_imdb_cache';
     var TTL = 14 * 24 * 3600 * 1000;
@@ -160,7 +161,8 @@
         '.card__vote--imdb[data-imdb="8"]{background:#1e9e4a;color:#fff}' +
         '.card__vote--imdb[data-imdb="7"]{background:#8bc34a;color:#000}' +
         '.card__vote--imdb[data-imdb="5"]{background:#ff9800;color:#000}' +
-        '.card__vote--imdb[data-imdb="0"]{background:#e53935;color:#fff}';
+        '.card__vote--imdb[data-imdb="0"]{background:#e53935;color:#fff}' +
+        '.rate--tmdb{display:none!important}'; // the movie card's TMDB badge (only that template uses the class)
     document.head.appendChild(style);
 
     // ---- 2) movie card: keep a known IMDb badge visible ----

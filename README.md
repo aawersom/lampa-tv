@@ -9,7 +9,7 @@ parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pag
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
 Versions on the TV (2026-10-18): ru-torrents 1.11.0, similar 1.1.0, quick-start 1.2.0, no-dmca 1.1.0, poster-heal 1.2.0,
-no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.3.1, tor-updater 0.1.6-tv.1.
+no-tv-channels 1.0.0, imdb-ratings 1.2.0, tmdb-route 1.1.0, catalog-next 1.3.1, tor-updater 0.1.6-tv.1, imdb-filter 1.0.0.
 
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
   whatever sort is chosen in «Сортировать», Russian releases come first, then the rest; inside each group
@@ -38,7 +38,7 @@ no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.3.1, 
   `updateChannel` is muted, every other bridge call passes); the app's 15-minute timer is stopped separately (appops).
 - `imdb-ratings.js` — poster tiles show the IMDb rating instead of TMDB (card data → cache → OMDb by imdb_id, TMDB external_ids
   when a list carries none; on-screen tiles only, cached 14 days; no number when IMDb is unknown; badge colour by rating: 8+ green, 7 light green, 6 yellow, 5 orange, lower red); on the movie card a known
-  IMDb rating is put back when the ratings plugin hides it after a failed lookup.
+  IMDb rating is put back when the ratings plugin hides it after a failed lookup; the card shows no TMDB badge.
 - `tmdb-route.js` — TMDB API from a host this network can reach: every TMDB API request (Lampa's own and plugins' hardcoded
   api.themoviedb.org URLs, $.ajax and the Android app's native requests) goes to the host picked by asking api.themoviedb.org →
   lampa.byskaz.ru/tmdb/api → tmdb-api.rootu.top → tmdbapi.bylampa.online → apitmdb.cub.best in turn (not apitmdb.cub.black: cache-only, redirects misses to the blocked TMDB); picked again at start, when the network returns, when Lampa is visible
@@ -50,3 +50,9 @@ no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.3.1, 
   the original: one fix in `episodeMap`. The original deep-copied Lampa's episode-list files through JSON; each file carries the card and the
   shared playlist (every entry with the card again), so a 73-episode list became tens of MB of JSON and the WebView renderer crashed ~3 s after
   the list opened. Now only id/path/length are copied. If upstream fixes it, go back to the original URL.
+- `imdb-filter.js` — Lampa's «Фильтр» by IMDb: CUB filters by the TMDB rating and only «от 8» works there (от 6/7 return everything,
+  ranges are ignored; 2023 «от 8» = 17 films), while tiles and the card show IMDb. The filter runs on IMDb's advanced search (IMDb rating,
+  votes, release dates, genres, original language, title type; by popularity, «В топе» = best rated with ≥ 25 000 votes, «Новинки» = newest
+  with ≥ 5 000; lower bars for languages with a small IMDb audience) and each title becomes a TMDB card carrying its IMDb rating
+  (2023 «от 8»: 228 films, «от 7»: 1033). The rating menu gets IMDb steps. CUB-only options (high quality, age rating, ongoing) keep
+  CUB's list with the rating applied to its IMDb field.
