@@ -2,7 +2,7 @@
  * Lampa: quicker start of a torrent — owner's TV tweak (Lampa 3.x, TorrServer).
  * 1) File list: a film (one video file, or one file holding ≥ 85% of the video bytes — the rest are samples/extras)
  *    starts at once instead of Lampa's 10-second countdown; in a series the focus goes to the episode to watch next
- *    (the one in progress, else the one after the last watched) — the choice stays with the viewer.
+ *    (the one in progress, else the one after the last watched, else the first) — the choice stays with the viewer.
  * 2) Preload: Lampa waits until TorrServer has PreloadCache % of its cache (one size for every file). Here the wait
  *    ends once ~10 seconds of THIS video are buffered (file size / runtime × 10 s); never more than TorrServer's own
  *    preload size. Done by trimming `preload_size` in TorrServer's `&stat` answers that Lampa polls (torrent.js preload).
@@ -10,7 +10,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.0.0';
+    window.lampa_tv_quick_start = '1.0.1';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -37,6 +37,7 @@
             if (p >= 90) lastWatched = i;
         });
         if (!target && lastWatched >= 0 && lastWatched + 1 < list.length) target = list[lastWatched + 1];
+        if (!target && lastWatched < 0) target = list[0]; // nothing watched yet: the first episode, not the season folder row
         if (target && Lampa.Modal && Lampa.Modal.scroll) Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
     }
 
