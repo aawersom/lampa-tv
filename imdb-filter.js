@@ -12,7 +12,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_imdb_filter) return;
-    window.lampa_tv_imdb_filter = '1.0.0';
+    window.lampa_tv_imdb_filter = '1.0.1';
 
     var SOURCE = 'imdb_filter';
     var PAGE = 20;
@@ -97,7 +97,7 @@
     function imdbPage(c, after, done) {
         var query = 'query { advancedTitleSearch(first: ' + PAGE + (after ? ', after: ' + JSON.stringify(after) : '') +
             ', constraints: ' + c.text + ', sort: { sortBy: ' + c.sort + ' }) { total pageInfo { hasNextPage endCursor } ' +
-            'edges { node { title { id ratingsSummary { aggregateRating } } } } } }';
+            'edges { node { title { id titleText { text } ratingsSummary { aggregateRating } } } } } }';
         var net = new Lampa.Reguest();
         net.timeout(15000);
         // IMDb answers only its own site in a browser (CORS); Lampa's native request has no such limit
@@ -106,7 +106,10 @@
                 if (typeof json === 'string') json = JSON.parse(json);
                 var s = json.data.advancedTitleSearch;
                 done({ total: s.total, next: s.pageInfo.hasNextPage ? s.pageInfo.endCursor : null,
-                    items: s.edges.map(function (e) { return { tt: e.node.title.id, rating: e.node.title.ratingsSummary && e.node.title.ratingsSummary.aggregateRating }; }) });
+                    items: s.edges.map(function (e) {
+                        var t = e.node.title;
+                        return { tt: t.id, name: t.titleText && t.titleText.text, rating: t.ratingsSummary && t.ratingsSummary.aggregateRating };
+                    }) });
             } catch (err) { done(null); }
         }, function () { done(null); }, JSON.stringify({ query: query }), { headers: IMDB_HEADERS, dataType: 'json' });
     }
@@ -155,6 +158,9 @@
             tmdbCard(item, type, function (x) {
                 if (x) {
                     var card = Object.assign({}, x, { source: 'tmdb', imdb_id: item.tt });
+                    // no Russian title in TMDB → the original, often in Tamil or Kannada script: IMDb's English title reads better
+                    var field = type === 'tv' ? 'name' : 'title';
+                    if (item.name && !/[a-zа-яё]/i.test(card[field] || '')) card[field] = item.name;
                     if (item.rating) card.imdb_rating = Number(item.rating).toFixed(1); // imdb-ratings paints it at once, no OMDb lookup
                     if (type === 'tv' && !card.media_type) card.media_type = 'tv';
                     out[i] = card;
