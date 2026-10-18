@@ -18,7 +18,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_catalog_next) return;
-    window.lampa_tv_catalog_next = '1.2.0';
+    window.lampa_tv_catalog_next = '1.3.0';
 
     var AHEAD_ROWS = 6, PAGES = 2;
 
@@ -34,12 +34,31 @@
         return isGrid(comp) ? comp : null;
     }
 
+    // CUB pages shift between requests (popularity order changes), so a title can come on two pages: «Прошлый год»,
+    // 3 repeats in 100 cards (TV, 2026-10-18). Pages reach the screen through `loaded` (core Next pushes slices of
+    // every page there), so a card already in the list is dropped on its way in.
+    function dedupe(comp) {
+        if (comp.loaded.__dedupe) return;
+        var seen = {};
+        var key = function (d) { return (d.media_type || (d.name || d.first_air_date ? 'tv' : 'movie')) + ':' + d.id; };
+        var root = comp.activity && comp.activity.render ? comp.activity.render()[0] : null;
+        if (root) Array.prototype.forEach.call(root.querySelectorAll('.card'), function (c) { if (c.card_data && c.card_data.id) seen[key(c.card_data)] = 1; });
+        var loaded = comp.loaded;
+        loaded.push = function () {
+            var chunks = Array.prototype.map.call(arguments, function (chunk) {
+                return (chunk || []).filter(function (d) { if (!d || !d.id) return true; var k = key(d); if (seen[k]) return false; seen[k] = 1; return true; });
+            }).filter(function (chunk) { return chunk.length; });
+            return chunks.length ? Array.prototype.push.apply(loaded, chunks) : loaded.length;
+        };
+        loaded.__dedupe = true;
+    }
+
     function whenIdle(comp, fn) { // the list is built and has no page request in flight
         var tries = 0;
         (function check() {
             if (comp.destroyed || ++tries > 100) return;
             var ready = comp.items && comp.items.length && Date.now() - (comp.builded_time || 0) > 1100 && !comp.next_wait;
-            if (ready) fn(); else setTimeout(check, 200);
+            if (ready) { dedupe(comp); fn(); } else setTimeout(check, 200);
         })();
     }
 
@@ -88,6 +107,7 @@
         setTimeout(function () { // after Lampa has moved the focus
             var comp = list();
             if (!comp) return;
+            if (comp.items && comp.items.length) dedupe(comp);
             var left = rowsLeft(comp);
             if (left >= 0 && left <= AHEAD_ROWS) more(comp, PAGES);
         }, 50);
