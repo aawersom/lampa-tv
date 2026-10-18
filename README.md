@@ -9,7 +9,7 @@ parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pag
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
 Versions on the TV (2026-10-18): ru-torrents 1.8.0, similar 1.1.0, quick-start 1.0.1, no-dmca 1.1.0, poster-heal 1.2.0,
-no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.3.1.
+no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.3.1, tor-updater 0.1.6-tv.1.
 
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
   whatever sort is chosen in «Сортировать», Russian releases come first, then the rest; inside each group
@@ -41,3 +41,7 @@ no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.3.1.
 - `catalog-next.js` — card-grid lists («Ещё», filter results, «Рекомендуем», «Релизы», «Избранное»/«История», «Подписки»…) load ahead: two pages as soon as the list opens, and two more whenever the focus gets
   within 6 rows of the last loaded row (fixes Lampa's list stalling at the end of page 1 when scrolled through quickly:
   its scroll asks for a page only when it moves, and ignores the first second); a title CUB sends again on a later page is not shown twice.
+- `tor-updater.js` — a copy of WatherMG's [Lampa Tor Updater](https://github.com/WatherMG/lampa-tor-updater) v0.1.6 (MIT), used instead of
+  the original: one fix in `episodeMap`. The original deep-copied Lampa's episode-list files through JSON; each file carries the card and the
+  shared playlist (every entry with the card again), so a 73-episode list became tens of MB of JSON and the WebView renderer crashed ~3 s after
+  the list opened. Now only id/path/length are copied. If upstream fixes it, go back to the original URL.

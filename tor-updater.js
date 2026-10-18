@@ -1,0 +1,1596 @@
+/* Lampa Tor Updater v0.1.6 | built 2026-10-03T00:13:11.316Z | https://github.com/WatherMG/lampa-tor-updater */
+/*
+ * Owner's TV copy (MIT, © 2026 WatherMG): the original v0.1.6 with one fix, marked «tv fix» in episodeMap.
+ * Lampa gives every file of the episode list its card and the shared playlist, where each entry holds the card again.
+ * The original deep-copied that list through JSON: files² cards (73 episodes of Game of Thrones → hundreds of MB),
+ * and the WebView renderer died ~3 s after the list opened (owner's TV, 2026-10-18). Only id/path/length are needed.
+ */
+(function () {
+    'use strict'
+
+    const VERSION = '0.1.6-tv.1'
+    const BUILD_DATE = '2026-10-03T00:13:11.316Z'
+    const COMPONENT = 'tor_updater'
+    const FOLLOW_KEY = 'torrent_follow'
+    const FOLLOW_VERSION = 1
+    const BOOTSTRAP_CACHE_KEY = 'tor_updater_bootstrap'
+    const DEFAULT_CHECK_HOURS = 6
+    const PROBE_TIMEOUT_MS = 18000
+    const VIDEO_EXTENSIONS = new Set(['asf', 'wmv', 'divx', 'avi', 'mp4', 'm4v', 'mov', '3gp', '3g2', 'mkv', 'trp', 'tp', 'mts', 'mpg', 'mpeg', 'dat', 'vob', 'rm', 'rmvb', 'm2ts', 'ts'])
+
+    const runtime = {
+        pendingSelection: null,
+        checking: new Set(),
+        sessions: new Map(),
+        candidates: new Map(),
+        pendingCleanup: new Map(),
+        activePlayerHash: null,
+        listHash: null,
+        bootstrapping: new Set(),
+        notified: new Set(),
+        recovery: null
+    }
+
+    function lampa() {
+        return typeof window !== 'undefined' ? window.Lampa : null
+    }
+
+    function log(...args) {
+        if (typeof console !== 'undefined' && console.log) console.log('[TorUpdater]', ...args)
+    }
+
+    function debug(...args) {
+        const L = lampa()
+        let on = false
+        try { on = !!(L && L.Storage && L.Storage.field('tor_updater_debug')) } catch (_) {}
+        if (on) log(...args)
+    }
+
+    function warn(...args) {
+        if (typeof console !== 'undefined' && console.warn) console.warn('[TorUpdater]', ...args)
+    }
+
+    function text(ru, en) {
+        const L = lampa()
+        let language = 'ru'
+        try { language = L && L.Storage ? L.Storage.field('language') : 'ru' } catch (_) {}
+        return language === 'ru' ? ru : en
+    }
+
+    function enabled() {
+        const L = lampa()
+        if (!L || !L.Storage) return false
+        try { return L.Storage.field('tor_updater_enabled') !== false } catch (_) { return true }
+    }
+
+    function autoUpdateEnabled() {
+        const L = lampa()
+        if (!L || !L.Storage) return true
+        try { return L.Storage.field('tor_updater_auto') !== false } catch (_) { return true }
+    }
+
+    function checkIntervalMs() {
+        const L = lampa()
+        let value = DEFAULT_CHECK_HOURS
+        try { value = Number(L.Storage.field('tor_updater_interval') || DEFAULT_CHECK_HOURS) } catch (_) {}
+        if (!Number.isFinite(value) || value < 1) value = DEFAULT_CHECK_HOURS
+        return value * 60 * 60 * 1000
+    }
+
+    function isTruthy(value) {
+        return value === true || value === 1 || value === '1' || value === 'true'
+    }
+
+    function shouldPersistByDefault() {
+        const L = lampa()
+        try { return isTruthy(L.Storage.get('torrserver_savedb', false)) } catch (_) { return false }
+    }
+
+    function safeJson(value, fallback) {
+        if (!value) return fallback
+        if (typeof value === 'object') return value
+        try { return JSON.parse(value) } catch (_) { return fallback }
+    }
+
+    function clone(value) {
+        try { return JSON.parse(JSON.stringify(value)) } catch (_) { return value }
+    }
+
+    function normalizedString(value) {
+        return String(value || '').trim().toLowerCase()
+    }
+
+    function isPlainObject(value) {
+        return !!value && typeof value === 'object' && !Array.isArray(value)
+    }
+
+    function isMissingMetadata(value) {
+        return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
+    }
+
+    function mergeMissingMetadata(base, incoming) {
+        if (!isPlainObject(base)) return isMissingMetadata(base) ? clone(incoming) : clone(base)
+        const out = clone(base) || {}
+        if (!isPlainObject(incoming)) return out
+
+        Object.keys(incoming).forEach((key) => {
+            const next = incoming[key]
+            const current = out[key]
+
+            if (isPlainObject(current) && isPlainObject(next)) {
+                out[key] = mergeMissingMetadata(current, next)
+            } else if (isMissingMetadata(current) && !isMissingMetadata(next)) {
+                out[key] = clone(next)
+            }
+        })
+
+        return out
+    }
+
+    function lampaTorrentTitle(candidate, fallback) {
+        const raw = String(candidate && (candidate.Title || candidate.title) || fallback || '').replace(/^\[LAMPA\]\s*/i, '').trim()
+        return raw ? '[LAMPA] ' + raw : ''
+    }
+
+    function lampaMovieTitle(movie, fallback) {
+        const local = String(movie && (movie.title || movie.name) || '').trim()
+        const original = String(movie && (movie.original_title || movie.original_name) || '').trim()
+        const parts = []
+
+        if (local) parts.push(local)
+        if (original && normalizedString(original) !== normalizedString(local)) parts.push(original)
+
+        const raw = parts.join(' / ') || String(fallback || '').replace(/^\[LAMPA\]\s*/i, '').trim()
+        return raw ? '[LAMPA] ' + raw : ''
+    }
+
+    function cleanLampaTitle(value) {
+        return String(value || '').replace(/^\[LAMPA\]\s*/i, '').trim()
+    }
+
+    function metadataRefreshTitle(status, movie) {
+        const current = String(status && status.title || '').trim()
+        const torrentName = String(status && status.name || '').trim()
+        const generic = lampaMovieTitle(movie, '')
+        const currentClean = cleanLampaTitle(current)
+        const genericClean = cleanLampaTitle(generic)
+
+        if (current && normalizedString(currentClean) !== normalizedString(genericClean)) return current
+
+        if (torrentName && normalizedString(torrentName) !== normalizedString(genericClean)) {
+            return lampaTorrentTitle({ Title: torrentName }, current || generic)
+        }
+
+        return current || generic
+    }
+
+
+    function normalizeIdentityUrl(value) {
+        if (!value) return ''
+        const input = String(value).trim()
+        if (!input) return ''
+
+        try {
+            const u = new URL(input)
+            u.hash = ''
+            u.hostname = u.hostname.toLowerCase()
+
+            const sensitive = ['apikey', 'api_key', 'passkey', 'token', 'auth', 'authkey', 'key']
+            sensitive.forEach((name) => u.searchParams.delete(name))
+
+            const pairs = []
+            u.searchParams.forEach((v, k) => pairs.push([k, v]))
+            pairs.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]))
+            u.search = ''
+            pairs.forEach(([k, v]) => u.searchParams.append(k, v))
+
+            let out = u.toString()
+            if (out.endsWith('/') && u.pathname !== '/') out = out.slice(0, -1)
+            return out
+        } catch (_) {
+            return input.replace(/#.*$/, '').replace(/\/$/, '')
+        }
+    }
+
+    // Two seeded FNV-1a passes. This is an identity token, not a security primitive.
+    function stableHash(input) {
+        const value = String(input || '')
+        let h1 = 0x811c9dc5
+        let h2 = 0x9e3779b9
+        for (let i = 0; i < value.length; i++) {
+            const code = value.charCodeAt(i)
+            h1 ^= code
+            h1 = Math.imul(h1, 0x01000193)
+            h2 ^= code
+            h2 = Math.imul(h2, 0x85ebca6b)
+        }
+        return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0')
+    }
+
+    function releaseIdentity(result) {
+        if (!result) return null
+
+        const trackerId = normalizedString(result.TrackerId || result.trackerId)
+        const tracker = normalizedString(result.Tracker || result.tracker)
+        const source = trackerId || tracker
+        if (!source) return null
+
+        const details = normalizeIdentityUrl(result.Details || result.details)
+        const guid = normalizeIdentityUrl(result.Guid || result.guid)
+        const identityUrl = details || guid
+        if (!identityUrl) return null
+
+        return {
+            version: 1,
+            key: stableHash(source + '|' + identityUrl),
+            tracker_id: trackerId || '',
+            tracker: tracker || '',
+            via: details ? 'details' : 'guid'
+        }
+    }
+
+    function base32ToHex(input) {
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+        let bits = ''
+        let hex = ''
+        const clean = String(input || '').toUpperCase().replace(/=+$/, '')
+
+        for (const ch of clean) {
+            const val = alphabet.indexOf(ch)
+            if (val < 0) return ''
+            bits += val.toString(2).padStart(5, '0')
+        }
+
+        for (let i = 0; i + 4 <= bits.length; i += 4) {
+            hex += parseInt(bits.slice(i, i + 4), 2).toString(16)
+        }
+        return hex.slice(0, 40)
+    }
+
+    function infoHashFromMagnet(uri) {
+        if (!uri || !/^magnet:/i.test(String(uri))) return ''
+        const match = String(uri).match(/[?&]xt=urn:btih:([^&]+)/i)
+        if (!match) return ''
+        let value = decodeURIComponent(match[1]).trim()
+        if (/^[a-f0-9]{40}$/i.test(value)) return value.toLowerCase()
+        if (/^[a-z2-7]{32}$/i.test(value)) return base32ToHex(value).toLowerCase()
+        return ''
+    }
+
+    function resultInfoHash(result) {
+        const direct = String((result && (result.InfoHash || result.infoHash)) || '').trim().toLowerCase()
+        if (/^[a-f0-9]{40}$/i.test(direct)) return direct
+        if (/^[a-z2-7]{32}$/i.test(direct)) return base32ToHex(direct).toLowerCase()
+        return infoHashFromMagnet(result && (result.MagnetUri || result.magnetUri || result.Link || result.link || result.downloadUrl))
+    }
+
+    function resultLink(result) {
+        return result && (result.MagnetUri || result.magnetUri || result.Link || result.link || result.downloadUrl) || ''
+    }
+
+    function sameRelease(follow, result) {
+        if (!follow || !follow.release_key) return false
+        const identity = releaseIdentity(result)
+        return !!identity && identity.key === follow.release_key
+    }
+
+    function isPlayableFile(file) {
+        const ext = String(file && file.path || '').split('.').pop().toLowerCase()
+        return VIDEO_EXTENSIONS.has(ext)
+    }
+
+    function playableFileCount(files) {
+        return Array.isArray(files) ? files.filter(isPlayableFile).length : 0
+    }
+
+    function episodeKey(season, episode) {
+        const s = Number(season)
+        const e = Number(episode)
+        if (!Number.isInteger(s) || !Number.isInteger(e) || s < 0 || e < 1) return ''
+        return `S${String(s).padStart(2, '0')}E${String(e).padStart(2, '0')}`
+    }
+
+    function compareEpisodeMaps(oldMap, newMap) {
+        const oldKeys = [...oldMap.keys()]
+        const newKeys = [...newMap.keys()]
+        if (!oldKeys.length || !newKeys.length) return 'unknown'
+
+        const allOldPresent = oldKeys.every((key) => newMap.has(key))
+        if (!allOldPresent) return 'incompatible'
+        if (newKeys.length > oldKeys.length) return 'new_episodes'
+        if (newKeys.length === oldKeys.length) return 'revision'
+        return 'incompatible'
+    }
+
+    function isTv(movie) {
+        return !!(movie && (movie.original_name || movie.name || movie.first_air_date || movie.number_of_seasons))
+    }
+
+    function parserQuery(movie) {
+        const L = lampa()
+        const title = movie.title || movie.name || ''
+        const original = movie.original_title || movie.original_name || ''
+        const year = String(movie.first_air_date || movie.release_date || '0000').slice(0, 4)
+        const combinations = {
+            df: original,
+            df_year: `${original} ${year}`,
+            df_lg: `${original} ${title}`,
+            df_lg_year: `${original} ${title} ${year}`,
+            lg: title,
+            lg_year: `${title} ${year}`,
+            lg_df: `${title} ${original}`,
+            lg_df_year: `${title} ${original} ${year}`
+        }
+        let mode = 'df'
+        try { mode = L.Storage.field('parse_lang') || 'df' } catch (_) {}
+        return {
+            one: title,
+            two: original,
+            text: String(combinations[mode] || combinations.df || title).trim()
+        }
+    }
+
+    function hydrateMovie(movie, force) {
+        const L = lampa()
+        if (!movie || !movie.id) return Promise.reject(new Error('Card has no TMDB id'))
+        if (!force && Array.isArray(movie.genres)) return Promise.resolve(movie)
+
+        const tmdb = L && L.Api && L.Api.sources && L.Api.sources.tmdb
+        const source = tmdb && typeof tmdb.get === 'function' ? tmdb : (L && L.TMDB)
+        if (!source || typeof source.get !== 'function') return Promise.reject(new Error('TMDB source is unavailable'))
+
+        const mediaType = isTv(movie) ? 'tv' : 'movie'
+
+        return new Promise((resolve, reject) => {
+            source.get(`${mediaType}/${movie.id}`, {}, (fresh) => {
+                if (!fresh || !Array.isArray(fresh.genres)) return reject(new Error('TMDB card has no genres'))
+                const merged = Object.assign({}, movie, fresh, { genres: fresh.genres })
+                try {
+                    if (merged.poster_path && L.Api && typeof L.Api.img === 'function') {
+                        merged.img = L.Api.img(merged.poster_path, 'w300')
+                        merged.poster = merged.img
+                    }
+                } catch (_) {}
+                resolve(merged)
+            }, reject, force ? false : { life: 60 * 24 })
+        })
+    }
+
+    async function parserSearch(movie) {
+        const L = lampa()
+        if (!L || !L.Parser || typeof L.Parser.get !== 'function') throw new Error('Lampa.Parser is unavailable')
+        const fullMovie = await hydrateMovie(movie)
+        const q = parserQuery(fullMovie)
+
+        return new Promise((resolve, reject) => {
+            try {
+                L.Parser.get({
+                    search: q.text,
+                    search_one: q.one,
+                    search_two: q.two,
+                    movie: fullMovie,
+                    page: 1
+                }, (data) => resolve((data && data.Results) || []), reject)
+            } catch (error) {
+                reject(error)
+            }
+        })
+    }
+
+    function newRequest() {
+        const L = lampa()
+        if (!L || !L.Reguest) throw new Error('Lampa.Reguest is unavailable')
+        return new L.Reguest()
+    }
+
+    function torrServerUrl() {
+        const L = lampa()
+        const url = L && L.Torserver && L.Torserver.url && L.Torserver.url()
+        if (!url) throw new Error('TorrServer URL is not configured')
+        return String(url).replace(/\/$/, '')
+    }
+
+    function request(path, payload, timeoutMs, dataType = 'json') {
+        const net = newRequest()
+        if (timeoutMs && net.timeout) net.timeout(timeoutMs)
+
+        return new Promise((resolve, reject) => {
+            net.silent(torrServerUrl() + path, resolve, (xhr, exception) => {
+                const decoded = net.errorDecode ? net.errorDecode(xhr, exception) : ''
+                const status = xhr && xhr.status ? `HTTP ${xhr.status}` : ''
+                const details = [status, exception, decoded].filter(Boolean).join(' / ')
+                const err = new Error(`TorrServer request failed for ${path}${details ? ': ' + details : ''}`)
+                err.raw = xhr
+                err.exception = exception
+                reject(err)
+            }, JSON.stringify(payload), { dataType })
+        })
+    }
+
+    const ts = {
+        get: (hash) => request('/torrents', { action: 'get', hash }, 5000),
+        set: (hash, status, data) => request('/torrents', {
+            action: 'set',
+            hash,
+            title: status.title || '',
+            poster: status.poster || '',
+            category: status.category || '',
+            data: JSON.stringify(data || {})
+        }, 5000, 'text'),
+        add: (link, meta, saveToDb, data) => request('/torrents', {
+            action: 'add',
+            link,
+            title: meta.title || '',
+            poster: meta.poster || '',
+            category: meta.category || '',
+            data: data ? JSON.stringify(data) : '',
+            save_to_db: !!saveToDb
+        }, 8000),
+        remove: (hash) => request('/torrents', { action: 'rem', hash }, 8000, 'text'),
+        drop: (hash) => request('/torrents', { action: 'drop', hash }, 5000, 'text'),
+        viewed: (hash) => request('/viewed', { action: 'list', hash }, 5000),
+        list: () => request('/torrents', { action: 'list' }, 8000),
+        setViewed: (hash, fileIndex, timecode) => request('/viewed', {
+            action: 'set', hash, file_index: fileIndex, timecode
+        }, 5000, 'text')
+    }
+
+    async function waitForFiles(hash, timeoutMs = PROBE_TIMEOUT_MS) {
+        const started = Date.now()
+        let last
+        while (Date.now() - started < timeoutMs) {
+            try {
+                last = await ts.get(hash)
+                if (last && Array.isArray(last.file_stats) && last.file_stats.length) return last
+            } catch (_) {}
+            await new Promise((resolve) => setTimeout(resolve, 1200))
+        }
+        throw new Error(`Torrent metadata timeout: ${hash}`)
+    }
+
+    function episodeMap(movie, files) {
+        const L = lampa()
+        const map = new Map()
+        if (!movie || !files || !files.length || !L || !L.Torserver || !L.Torserver.parse) return map
+
+        // tv fix: copy only the fields used below, not Lampa's file objects (they carry the card and the whole playlist)
+        const playable = files.map((file) => ({ id: file.id, path: file.path, length: file.length })).filter((file) => {
+            const ext = String(file.path || '').split('.').pop().toLowerCase()
+            return VIDEO_EXTENSIONS.has(ext)
+        })
+
+        try {
+            if (L.Torserver.clearFileName) L.Torserver.clearFileName(playable)
+        } catch (_) {}
+
+        playable.forEach((file) => {
+            try {
+                const parsed = L.Torserver.parse({
+                    movie,
+                    files: playable,
+                    filename: file.path_human || file.path,
+                    path: file.path
+                })
+                const key = episodeKey(parsed && parsed.season, parsed && parsed.episode)
+                if (key && !map.has(key)) map.set(key, { id: file.id, path: file.path, season: parsed.season, episode: parsed.episode })
+            } catch (_) {}
+        })
+
+        return map
+    }
+
+    function torrentData(status) {
+        return safeJson(status && status.data, {}) || {}
+    }
+
+    async function writeFollow(status, patch) {
+        const data = torrentData(status)
+        const current = data[FOLLOW_KEY] || {}
+        data[FOLLOW_KEY] = Object.assign({}, current, patch, { version: FOLLOW_VERSION })
+        await ts.set(status.hash, status, data)
+        return data[FOLLOW_KEY]
+    }
+
+    function selectionMetadata(result) {
+        const identity = releaseIdentity(result)
+        if (!identity) return null
+        return {
+            identity,
+            info_hash: resultInfoHash(result),
+            selected_at: Date.now(),
+            persistent: shouldPersistByDefault()
+        }
+    }
+
+    async function bindPendingSelection(hash, movie, files) {
+        const pending = runtime.pendingSelection
+        if (!pending || !pending.identity) return null
+        runtime.pendingSelection = null
+
+        try {
+            const status = await ts.get(hash)
+            const count = episodeMap(movie, files || status.file_stats || []).size
+            const follow = await writeFollow(status, {
+                release_key: pending.identity.key,
+                tracker_id: pending.identity.tracker_id,
+                tracker: pending.identity.tracker,
+                identity_via: pending.identity.via,
+                info_hash: String(hash).toLowerCase(),
+                checked_at: Date.now(),
+                episode_count: count,
+                persistent: pending.persistent
+            })
+            log('Bound release identity', hash, follow.tracker_id || follow.tracker, follow.identity_via)
+            return follow
+        } catch (error) {
+            warn('Failed to bind selected release', error)
+            return null
+        }
+    }
+
+    function bootstrapCache() {
+        const L = lampa()
+        try { return L.Storage.get(BOOTSTRAP_CACHE_KEY, {}) || {} } catch (_) { return {} }
+    }
+
+    function setBootstrapAttempt(hash) {
+        const L = lampa()
+        try {
+            const cache = bootstrapCache()
+            cache[hash] = Date.now()
+            const keys = Object.keys(cache)
+            if (keys.length > 200) keys.sort((a, b) => cache[b] - cache[a]).slice(200).forEach((key) => delete cache[key])
+            L.Storage.set(BOOTSTRAP_CACHE_KEY, cache)
+        } catch (_) {}
+    }
+
+    function bootstrapDue(hash) {
+        const at = Number(bootstrapCache()[hash] || 0)
+        return !at || Date.now() - at > 24 * 60 * 60 * 1000
+    }
+
+    async function bootstrapFollow(hash, movie, files, force) {
+        if (runtime.bootstrapping.has(hash) || (!force && !bootstrapDue(hash))) return null
+        runtime.bootstrapping.add(hash)
+        setBootstrapAttempt(hash)
+
+        try {
+            const results = await parserSearch(movie)
+            const exact = results.filter((result) => resultInfoHash(result) === String(hash).toLowerCase())
+            const matched = exact.find((result) => releaseIdentity(result))
+            if (!matched) return null
+
+            const identity = releaseIdentity(matched)
+            const status = await ts.get(hash)
+            const count = episodeMap(movie, files || status.file_stats || []).size
+            const follow = await writeFollow(status, {
+                release_key: identity.key,
+                tracker_id: identity.tracker_id,
+                tracker: identity.tracker,
+                identity_via: identity.via,
+                info_hash: String(hash).toLowerCase(),
+                checked_at: Date.now(),
+                episode_count: count,
+                persistent: true
+            })
+            log('Bootstrapped existing torrent', hash)
+            return follow
+        } catch (error) {
+            log('Bootstrap skipped', hash, error && error.message)
+            return null
+        } finally {
+            runtime.bootstrapping.delete(hash)
+        }
+    }
+
+    function chooseReleaseCandidate(follow, results, currentHash) {
+        const matches = results.filter((result) => sameRelease(follow, result))
+        if (!matches.length) return null
+
+        matches.sort((a, b) => {
+            const ah = resultInfoHash(a)
+            const bh = resultInfoHash(b)
+            if (ah !== currentHash && bh === currentHash) return -1
+            if (ah === currentHash && bh !== currentHash) return 1
+            return Number(b.PublisTime || b.PublishDate || 0) - Number(a.PublisTime || a.PublishDate || 0)
+        })
+        return matches[0]
+    }
+
+    async function probeCandidate(oldHash, movie, oldStatus, candidate) {
+        const link = resultLink(candidate)
+        if (!link) throw new Error('Candidate has no torrent link')
+
+        const data = torrentData(oldStatus)
+        const meta = {
+            title: oldStatus.title || '',
+            poster: oldStatus.poster || '',
+            category: oldStatus.category || 'tv'
+        }
+
+        const added = await ts.add(link, meta, false, null)
+        const newHash = String((added && added.hash) || resultInfoHash(candidate) || '').toLowerCase()
+        if (!newHash) throw new Error('TorrServer did not return candidate hash')
+        if (newHash === String(oldHash).toLowerCase()) {
+            return { classification: 'same', newHash, status: oldStatus, candidate, oldMap: episodeMap(movie, oldStatus.file_stats || []), newMap: episodeMap(movie, oldStatus.file_stats || []), data }
+        }
+
+        let newStatus
+        try {
+            newStatus = await waitForFiles(newHash)
+        } catch (error) {
+            try { await ts.drop(newHash) } catch (_) {}
+            throw error
+        }
+
+        const oldMap = episodeMap(movie, oldStatus.file_stats || [])
+        let newMap = episodeMap(movie, newStatus.file_stats || [])
+        let classification
+
+        if (isTv(movie)) {
+            let previousSignature = ''
+            let stableReads = 0
+            const started = Date.now()
+
+            while (Date.now() - started < 7000 && (newMap.size === 0 || stableReads < 2)) {
+                const signature = [...newMap.keys()].sort().join(',')
+                if (signature && signature === previousSignature) stableReads++
+                else stableReads = 0
+                previousSignature = signature
+
+                if (newMap.size > 0 && stableReads >= 2) break
+
+                await new Promise((resolve) => setTimeout(resolve, 900))
+                try {
+                    newStatus = await ts.get(newHash)
+                    newMap = episodeMap(movie, newStatus.file_stats || [])
+                } catch (_) {}
+            }
+
+            classification = compareEpisodeMaps(oldMap, newMap)
+        } else {
+            const oldPlayable = playableFileCount(oldStatus.file_stats || [])
+            const newPlayable = playableFileCount(newStatus.file_stats || [])
+            classification = oldPlayable > 0 && newPlayable > 0 ? 'revision' : 'unknown'
+        }
+
+        return { classification, newHash, status: newStatus, candidate, oldMap, newMap, data, link }
+    }
+
+    async function markChecked(status, follow, extra) {
+        try {
+            return await writeFollow(status, Object.assign({}, extra || {}, {
+                checked_at: Date.now(),
+                info_hash: String(status.hash || follow.info_hash || '').toLowerCase()
+            }))
+        } catch (_) {
+            return follow
+        }
+    }
+
+    function candidateSummary(probe) {
+        return {
+            candidate: probe.candidate,
+            classification: probe.classification,
+            old_count: probe.oldMap.size,
+            new_count: probe.newMap.size,
+            found_at: Date.now()
+        }
+    }
+
+    function notifyCandidate(hash, probe) {
+        if (runtime.notified.has(hash)) return
+        runtime.notified.add(hash)
+        const L = lampa()
+        if (!L || !L.Noty) return
+        const suffix = probe.classification === 'new_episodes' && probe.newMap.size > probe.oldMap.size
+            ? `: ${probe.oldMap.size} → ${probe.newMap.size}`
+            : ''
+        L.Noty.show(text('Найдена новая версия раздачи', 'A new torrent revision is available') + suffix)
+    }
+
+
+    async function checkForUpdate(hash, movie, files, options) {
+        options = options || {}
+        hash = String(hash || '').toLowerCase()
+        if (!enabled() || !hash || !movie || !movie.id) return { kind: 'skipped' }
+        if (runtime.checking.has(hash)) return { kind: 'busy' }
+
+        runtime.checking.add(hash)
+        try {
+            const oldStatus = await ts.get(hash)
+            let data = torrentData(oldStatus)
+            let follow = data[FOLLOW_KEY]
+
+            if (follow && follow.superseded_by) return { kind: 'superseded', hash: follow.superseded_by }
+
+            if (!follow || !follow.release_key) {
+                follow = await bootstrapFollow(hash, movie, files || oldStatus.file_stats || [], options.force)
+                if (!follow) return { kind: 'unbound' }
+                data = torrentData(await ts.get(hash))
+            }
+
+            if (!options.force && follow.checked_at && Date.now() - Number(follow.checked_at) < checkIntervalMs()) {
+                return { kind: 'fresh' }
+            }
+
+            const results = await parserSearch(movie)
+            const candidate = chooseReleaseCandidate(follow, results, hash)
+            if (!candidate) {
+                await markChecked(oldStatus, follow)
+                runtime.candidates.delete(hash)
+                return { kind: 'not_found' }
+            }
+
+            const advertisedHash = resultInfoHash(candidate)
+            if (advertisedHash && advertisedHash === hash) {
+                await markChecked(oldStatus, follow)
+                runtime.candidates.delete(hash)
+                return { kind: 'same' }
+            }
+
+            const probe = await probeCandidate(hash, movie, oldStatus, candidate)
+            await markChecked(oldStatus, follow, { last_result: probe.classification })
+
+            if (probe.classification === 'same') {
+                runtime.candidates.delete(hash)
+                return { kind: 'same' }
+            }
+
+            runtime.candidates.set(hash, candidateSummary(probe))
+
+            if (probe.classification === 'new_episodes' && autoUpdateEnabled() && options.allowAuto !== false) {
+                const applied = await applyUpdate(hash, movie, probe, options)
+                return { kind: 'updated', applied }
+            }
+
+            try { await ts.drop(probe.newHash) } catch (_) {}
+
+            if (probe.classification === 'revision' || probe.classification === 'unknown' || probe.classification === 'new_episodes') {
+                notifyCandidate(hash, probe)
+                return { kind: 'available', probe: candidateSummary(probe) }
+            }
+
+            return { kind: 'incompatible' }
+        } catch (error) {
+            log('Check failed; leaving Lampa flow untouched', hash, error && error.message)
+            return { kind: 'error', error }
+        } finally {
+            runtime.checking.delete(hash)
+        }
+    }
+
+    async function transferViewed(oldHash, newHash, oldMap, newMap) {
+        let viewed = []
+        try { viewed = await ts.viewed(oldHash) } catch (_) { return }
+        if (!Array.isArray(viewed) || !viewed.length) return
+
+        const oldByIndex = new Map()
+        oldMap.forEach((value, key) => oldByIndex.set(Number(value.id), key))
+
+        for (const mark of viewed) {
+            const key = oldByIndex.get(Number(mark.file_index))
+            const target = key && newMap.get(key)
+            if (!target || !mark.timecode) continue
+            try { await ts.setViewed(newHash, target.id, mark.timecode) } catch (_) {}
+        }
+    }
+
+    function hashBusy(hash) {
+        return runtime.activePlayerHash === hash || runtime.listHash === hash
+    }
+
+    async function cleanupOld(hash) {
+        if (!hash || hashBusy(hash)) return false
+        try {
+            await ts.remove(hash)
+            runtime.pendingCleanup.delete(hash)
+            log('Removed superseded torrent', hash)
+            return true
+        } catch (error) {
+            warn('Failed to remove superseded torrent', hash, error)
+            return false
+        }
+    }
+
+    async function applyUpdate(oldHash, movie, probe, options) {
+        options = options || {}
+        const oldStatus = await ts.get(oldHash)
+        const oldData = torrentData(oldStatus)
+        const follow = oldData[FOLLOW_KEY] || {}
+        const identity = releaseIdentity(probe.candidate)
+        if (!identity || identity.key !== follow.release_key) throw new Error('Release identity changed during update')
+        if (probe.classification === 'incompatible') throw new Error('Candidate does not contain all current episodes')
+
+        let currentProbe = probe
+        if (!probe.newHash || !probe.status || !probe.status.file_stats) {
+            currentProbe = await probeCandidate(oldHash, movie, oldStatus, probe.candidate)
+        }
+
+        const link = resultLink(currentProbe.candidate)
+        if (!link) throw new Error('Candidate link is unavailable')
+
+        const newHash = String(currentProbe.newHash).toLowerCase()
+        const candidateData = currentProbe.status ? torrentData(currentProbe.status) : {}
+        let newData = mergeMissingMetadata(candidateData, oldData)
+
+        const freshMovie = mergeMissingMetadata(
+            candidateData.movie || {},
+            mergeMissingMetadata(oldData.movie || {}, movie || {})
+        )
+
+        const refreshMovieFields = [
+            'title', 'name', 'original_title', 'original_name',
+            'poster_path', 'backdrop_path', 'img', 'poster', 'background_image',
+            'release_date', 'first_air_date', 'number_of_seasons', 'number_of_episodes',
+            'next_episode_to_air', 'status'
+        ]
+        refreshMovieFields.forEach((key) => {
+            if (movie && !isMissingMetadata(movie[key])) freshMovie[key] = clone(movie[key])
+        })
+
+        newData = mergeMissingMetadata(newData, { lampa: true, movie: freshMovie })
+        newData.lampa = oldData.lampa !== undefined ? oldData.lampa : true
+        if (freshMovie && Object.keys(freshMovie).length) newData.movie = freshMovie
+
+        newData[FOLLOW_KEY] = Object.assign({}, follow, {
+            version: FOLLOW_VERSION,
+            release_key: identity.key,
+            tracker_id: identity.tracker_id,
+            tracker: identity.tracker,
+            identity_via: identity.via,
+            info_hash: newHash,
+            checked_at: Date.now(),
+            episode_count: isTv(movie) ? currentProbe.newMap.size : Number(follow.episode_count || 0),
+            last_result: currentProbe.classification,
+            previous_hash: oldHash
+        })
+
+        const persist = follow.persistent !== false
+        const candidateTitle = lampaTorrentTitle(currentProbe.candidate, currentProbe.status && (currentProbe.status.title || currentProbe.status.name))
+        const freshPoster = (freshMovie && (freshMovie.poster || freshMovie.img)) || ''
+        const meta = {
+            title: candidateTitle || (currentProbe.status && currentProbe.status.title) || oldStatus.title || '',
+            poster: freshPoster || (currentProbe.status && currentProbe.status.poster) || oldStatus.poster || '',
+            category: (currentProbe.status && currentProbe.status.category) || oldStatus.category || (isTv(movie) ? 'tv' : 'movie')
+        }
+
+        await ts.add(link, meta, persist, newData)
+        const newStatus = await waitForFiles(newHash)
+        const mergedStatus = Object.assign({}, newStatus, {
+            title: meta.title || newStatus.title,
+            poster: meta.poster || newStatus.poster,
+            category: meta.category || newStatus.category
+        })
+        await ts.set(newHash, mergedStatus, newData)
+        await transferViewed(oldHash, newHash, currentProbe.oldMap, currentProbe.newMap)
+
+        try { await writeFollow(oldStatus, { superseded_by: newHash, checked_at: Date.now(), last_result: 'superseded' }) } catch (_) {}
+
+        runtime.pendingCleanup.set(oldHash, newHash)
+        const activeComponent = currentComponent()
+        if (!hashBusy(oldHash) && activeComponent !== 'mytorrents') await cleanupOld(oldHash)
+
+        runtime.candidates.delete(oldHash)
+        runtime.notified.delete(oldHash)
+
+        const L = lampa()
+        if (L && L.Noty) {
+            if (currentProbe.classification === 'new_episodes') {
+                L.Noty.show(text('Раздача обновлена', 'Torrent updated') + `: ${currentProbe.oldMap.size} → ${currentProbe.newMap.size}`)
+            } else {
+                L.Noty.show(text('Версия раздачи обновлена', 'Torrent revision updated'))
+            }
+        }
+
+        if (options.objectRef) {
+            options.objectRef.hash = newHash
+            options.objectRef.data = newData
+        }
+
+        return { oldHash, newHash, classification: currentProbe.classification }
+    }
+
+
+    function currentComponent() {
+        const L = lampa()
+        try {
+            const active = L && L.Activity && L.Activity.active && L.Activity.active()
+            return active && active.component || ''
+        } catch (_) { return '' }
+    }
+
+    async function cleanupPersistedSuperseded() {
+        try {
+            const list = await ts.list()
+            if (!Array.isArray(list) || !list.length) return
+            const hashes = new Set(list.map((item) => String(item.hash || '').toLowerCase()).filter(Boolean))
+            for (const item of list) {
+                const hash = String(item.hash || '').toLowerCase()
+                const data = torrentData(item)
+                const follow = data[FOLLOW_KEY]
+                const target = follow && String(follow.superseded_by || '').toLowerCase()
+                if (hash && target && hashes.has(target) && !hashBusy(hash)) {
+                    await cleanupOld(hash)
+                }
+            }
+        } catch (error) {
+            debug('Persisted cleanup skipped', error && error.message)
+        }
+    }
+
+    function currentSession(hash) {
+        return runtime.sessions.get(hash) || null
+    }
+
+
+    function activeControllerName(fallback = 'content') {
+        const L = lampa()
+        try {
+            const enabled = L && L.Controller && L.Controller.enabled && L.Controller.enabled()
+            return enabled && enabled.name ? enabled.name : fallback
+        } catch (_) {
+            return fallback
+        }
+    }
+
+    function restoreController(name) {
+        const L = lampa()
+        try {
+            if (L && L.Controller && L.Controller.toggle) L.Controller.toggle(name || 'content')
+        } catch (_) {}
+    }
+
+    function closeRecoveryPage() {
+        const L = lampa()
+        try {
+            const active = L && L.Activity && L.Activity.active && L.Activity.active()
+            if (active && active.component === 'torrents') L.Activity.backward()
+        } catch (_) {}
+
+        setTimeout(() => {
+            try {
+                if (L && L.Activity && L.Activity.refresh) L.Activity.refresh()
+            } catch (_) {}
+        }, 300)
+    }
+
+
+    function sameMovie(a, b) {
+        if (!a || !b) return false
+        if (a.id && b.id) return String(a.id) === String(b.id)
+        return String(a.original_name || a.name || a.title || '') === String(b.original_name || b.name || b.title || '')
+    }
+
+    async function openNativeRecovery(hash, movie, files, objectRef) {
+        const L = lampa()
+        let fullMovie
+
+        try {
+            fullMovie = await hydrateMovie(movie)
+        } catch (error) {
+            warn('Legacy recovery card hydration failed', error)
+            if (L && L.Noty) L.Noty.show(text('Не удалось открыть штатный поиск торрентов', 'Could not open native torrent search'))
+            return
+        }
+
+        const q = parserQuery(fullMovie)
+        runtime.recovery = {
+            hash: String(hash).toLowerCase(),
+            movie: fullMovie,
+            files: files || [],
+            objectRef: objectRef || null,
+            started_at: Date.now()
+        }
+
+        L.Activity.push({
+            url: '',
+            title: text('Выберите раздачу для обновления', 'Choose release for update'),
+            component: 'torrents',
+            search: q.text,
+            search_one: q.one,
+            search_two: q.two,
+            movie: fullMovie,
+            page: 1,
+            tor_updater_recovery: true
+        })
+
+        if (L && L.Noty) L.Noty.show(text(
+            'Выберите нужную раздачу и нажмите OK',
+            'Choose the release and press OK'
+        ))
+    }
+
+    async function useRecoveryCandidate(candidate) {
+        const L = lampa()
+        const recovery = runtime.recovery
+        if (!recovery || !candidate) return
+
+        const hash = recovery.hash
+        const movie = recovery.movie
+        const identity = releaseIdentity(candidate)
+        const selectedHash = resultInfoHash(candidate)
+
+        if (!identity || !resultLink(candidate)) {
+            if (L && L.Noty) L.Noty.show(text(
+                'У этой раздачи нет стабильного идентификатора для привязки',
+                'This release has no stable identity for binding'
+            ))
+            return
+        }
+
+        if (selectedHash && selectedHash === hash) {
+            try {
+                const status = await ts.get(hash)
+                await writeFollow(status, {
+                    release_key: identity.key,
+                    tracker_id: identity.tracker_id,
+                    tracker: identity.tracker,
+                    identity_via: identity.via,
+                    info_hash: hash,
+                    checked_at: Date.now(),
+                    persistent: true
+                })
+
+                const currentTitle = cleanLampaTitle(status.title)
+                const candidateTitle = cleanLampaTitle(candidate.Title || candidate.title)
+                const recoveryController = activeControllerName('content')
+
+                if (!candidateTitle || normalizedString(currentTitle) === normalizedString(candidateTitle)) {
+                    runtime.recovery = null
+                    if (L && L.Noty) L.Noty.show(text(
+                        'Выбрана текущая версия раздачи',
+                        'The current torrent revision is already selected'
+                    ))
+                    closeRecoveryPage()
+                    return
+                }
+
+                L.Select.show({
+                    title: text('Имя раздачи отличается', 'Torrent title differs'),
+                    items: [
+                        {
+                            title: text('Обновить имя', 'Update title'),
+                            subtitle: text('Новое: ', 'New: ') + candidateTitle,
+                            onSelect: async () => {
+                                restoreController(recoveryController)
+
+                                try {
+                                    const boundStatus = await ts.get(hash)
+                                    const data = torrentData(boundStatus)
+                                    const updatedTitle = lampaTorrentTitle(candidate, boundStatus.title)
+
+                                    await ts.set(hash, Object.assign({}, boundStatus, {
+                                        title: updatedTitle
+                                    }), data)
+
+                                    if (recovery.objectRef) {
+                                        recovery.objectRef.title = cleanLampaTitle(updatedTitle)
+                                    }
+
+                                    runtime.recovery = null
+                                    if (L && L.Noty) L.Noty.show(text(
+                                        'Имя раздачи обновлено',
+                                        'Torrent title updated'
+                                    ))
+                                    closeRecoveryPage()
+                                } catch (error) {
+                                    warn('Failed to update current torrent title', error)
+                                    if (L && L.Noty) L.Noty.show(text(
+                                        'Не удалось обновить имя раздачи',
+                                        'Could not update torrent title'
+                                    ))
+                                }
+                            }
+                        },
+                        {
+                            title: text('Оставить текущее', 'Keep current title'),
+                            subtitle: text('Текущее: ', 'Current: ') + currentTitle,
+                            onSelect: () => {
+                                restoreController(recoveryController)
+                                runtime.recovery = null
+                                closeRecoveryPage()
+                            }
+                        }
+                    ],
+                    onBack: () => restoreController(recoveryController)
+                })
+            } catch (error) {
+                warn('Failed to reconcile current release', error)
+                if (L && L.Noty) L.Noty.show(text(
+                    'Не удалось сопоставить метаданные текущей раздачи',
+                    'Could not reconcile current torrent metadata'
+                ))
+            }
+            return
+        }
+
+        if (L && L.Noty) L.Noty.show(text('Проверяю выбранную раздачу…', 'Checking selected release…'))
+
+        let oldStatus
+        let probe
+        try {
+            oldStatus = await ts.get(hash)
+            probe = await probeCandidate(hash, movie, oldStatus, candidate)
+        } catch (error) {
+            warn('Legacy recovery probe failed', error)
+            if (L && L.Noty) L.Noty.show(text('Не удалось проверить выбранную раздачу', 'Could not verify the selected release'))
+            return
+        }
+
+        if (probe.classification === 'incompatible') {
+            try { if (probe.newHash && probe.newHash !== hash) await ts.drop(probe.newHash) } catch (_) {}
+            if (L && L.Noty) L.Noty.show(text(
+                'Эта раздача не содержит все серии из текущего торрента',
+                'This release does not contain all episodes from the current torrent'
+            ))
+            return
+        }
+
+        if (probe.classification === 'unknown') {
+            try { if (probe.newHash && probe.newHash !== hash) await ts.drop(probe.newHash) } catch (_) {}
+            if (L && L.Noty) L.Noty.show(text(
+                'Не удалось надёжно сопоставить серии в этой раздаче',
+                'Could not reliably match episodes in this release'
+            ))
+            return
+        }
+
+        const subtitle = probe.classification === 'new_episodes'
+            ? `${probe.oldMap.size} → ${probe.newMap.size} ${text('серий', 'episodes')}`
+            : isTv(movie)
+                ? text('Состав серий одинаковый, но это другая ревизия torrent', 'Episode set is unchanged, but this is another torrent revision')
+                : text('Новая ревизия выбранной раздачи', 'A new revision of the selected release')
+        const recoveryController = activeControllerName('content')
+
+        L.Select.show({
+            title: text('Привязать эту раздачу?', 'Bind this release?'),
+            items: [
+                {
+                    title: text('Привязать и обновить', 'Bind and update'),
+                    subtitle,
+                    onSelect: async () => {
+                        restoreController(recoveryController)
+                        if (L && L.Noty) L.Noty.show(text('Обновляю раздачу…', 'Updating torrent…'))
+
+                        try {
+                            const status = await ts.get(hash)
+                            await writeFollow(status, {
+                                release_key: identity.key,
+                                tracker_id: identity.tracker_id,
+                                tracker: identity.tracker,
+                                identity_via: identity.via,
+                                info_hash: String(hash).toLowerCase(),
+                                checked_at: 0,
+                                episode_count: probe.oldMap.size,
+                                persistent: true,
+                                legacy_recovered_at: Date.now()
+                            })
+
+                            await applyUpdate(hash, movie, probe, {
+                                manual: true,
+                                objectRef: recovery.objectRef
+                            })
+                            runtime.recovery = null
+                            log('Recovered legacy release binding', hash, identity.tracker_id || identity.tracker, identity.via)
+                            closeRecoveryPage()
+                        } catch (error) {
+                            warn('Legacy recovery update failed', error)
+                            if (L && L.Noty) L.Noty.show(text(
+                                'Не удалось безопасно привязать и обновить раздачу',
+                                'Could not safely bind and update the release'
+                            ))
+                        }
+                    }
+                },
+                {
+                    title: text('Отмена', 'Cancel'),
+                    onSelect: async () => {
+                        restoreController(recoveryController)
+                        try { if (probe.newHash && probe.newHash !== hash) await ts.drop(probe.newHash) } catch (_) {}
+                    }
+                }
+            ],
+            onBack: async () => {
+                restoreController(recoveryController)
+                try { if (probe.newHash && probe.newHash !== hash) await ts.drop(probe.newHash) } catch (_) {}
+            }
+        })
+    }
+
+    function bindRecoveryTorrentItem(e) {
+        const L = lampa()
+        const recovery = runtime.recovery
+        if (!recovery || !e || e.type !== 'render' || !e.element || !e.item) return
+        if (Date.now() - Number(recovery.started_at || 0) > 15 * 60 * 1000) {
+            runtime.recovery = null
+            return
+        }
+
+        let active
+        try { active = L.Activity.active() } catch (_) { active = null }
+        if (!active || active.component !== 'torrents' || !sameMovie(active.movie, recovery.movie)) return
+
+        try {
+            e.item.off('hover:enter')
+            e.item.on('hover:enter', () => {
+                useRecoveryCandidate(e.element)
+            })
+        } catch (error) {
+            warn('Failed to bind recovery torrent item', error)
+        }
+    }
+
+    async function refreshTorrentMetadata(hash, movie, objectRef) {
+        const L = lampa()
+        if (L && L.Noty) L.Noty.show(text('Обновляю метаданные…', 'Refreshing metadata…'))
+
+        try {
+            const freshMovie = await hydrateMovie(movie, true)
+            const status = await ts.get(hash)
+            const data = torrentData(status)
+            const mergedMovie = mergeMissingMetadata(data.movie || {}, freshMovie || {})
+
+            const refreshFields = [
+                'title', 'name', 'original_title', 'original_name',
+                'poster_path', 'backdrop_path', 'img', 'poster', 'background_image',
+                'release_date', 'first_air_date', 'number_of_seasons', 'number_of_episodes',
+                'next_episode_to_air', 'status'
+            ]
+            refreshFields.forEach((key) => {
+                if (freshMovie && !isMissingMetadata(freshMovie[key])) mergedMovie[key] = clone(freshMovie[key])
+            })
+
+            const mergedData = mergeMissingMetadata(data, { lampa: true, movie: mergedMovie })
+            mergedData.lampa = data.lampa !== undefined ? data.lampa : true
+            mergedData.movie = mergedMovie
+
+            const freshTitle = metadataRefreshTitle(status, mergedMovie)
+            const freshPoster = mergedMovie.poster || mergedMovie.img || status.poster || ''
+
+            const updatedStatus = Object.assign({}, status, {
+                title: freshTitle || status.title,
+                poster: freshPoster,
+                category: status.category || (isTv(mergedMovie) ? 'tv' : 'movie')
+            })
+
+            await ts.set(hash, updatedStatus, mergedData)
+
+            if (objectRef) {
+                objectRef.title = (updatedStatus.title || '').replace(/^\[LAMPA\]\s*/i, '')
+                objectRef.poster = updatedStatus.poster
+                objectRef.data = mergedData
+            }
+
+            if (L && L.Noty) L.Noty.show(text('Метаданные обновлены', 'Metadata updated'))
+            setTimeout(() => {
+                try { if (L && L.Activity && L.Activity.refresh) L.Activity.refresh() } catch (_) {}
+            }, 200)
+        } catch (error) {
+            warn('Metadata refresh failed', error)
+            if (L && L.Noty) L.Noty.show(text('Не удалось обновить метаданные', 'Could not refresh metadata'))
+        }
+    }
+
+    async function startManualRecovery(hash, movie, files, objectRef) {
+        await openNativeRecovery(hash, movie, files, objectRef)
+    }
+
+    async function manualCheck(hash, movie, files, objectRef) {
+        const L = lampa()
+        if (L && L.Noty) L.Noty.show(text('Проверяю обновление…', 'Checking for updates…'))
+
+        const result = await checkForUpdate(hash, movie, files, { force: true, allowAuto: false })
+        if (result.kind === 'same' || result.kind === 'not_found' || result.kind === 'fresh') {
+            if (L && L.Noty) L.Noty.show(text('Новых версий раздачи нет', 'No new torrent revision found'))
+            return
+        }
+        if (result.kind === 'unbound') {
+            await openNativeRecovery(hash, movie, files, objectRef)
+            return
+        }
+        if (result.kind === 'incompatible') {
+            if (L && L.Noty) L.Noty.show(text('Новая версия не прошла безопасную проверку', 'The new revision failed the safe compatibility check'))
+            return
+        }
+        if (result.kind !== 'available') return
+
+        const cached = runtime.candidates.get(hash)
+        if (!cached) return
+
+        const subtitle = cached.classification === 'new_episodes'
+            ? `${cached.old_count} → ${cached.new_count} ${text('серий', 'episodes')}`
+            : text('Изменился infohash той же раздачи', 'The same release has a new infohash')
+        const manualController = activeControllerName('content')
+
+        L.Select.show({
+            title: text('Найдена новая версия раздачи', 'A new torrent revision is available'),
+            items: [
+                {
+                    title: text('Обновить вручную', 'Update manually'),
+                    subtitle,
+                    onSelect: async () => {
+                        restoreController(manualController)
+                        if (L && L.Noty) L.Noty.show(text('Обновляю раздачу…', 'Updating torrent…'))
+
+                        try {
+                            const oldStatus = await ts.get(hash)
+                            const probe = await probeCandidate(hash, movie, oldStatus, cached.candidate)
+                            if (probe.classification === 'incompatible') throw new Error('incompatible')
+                            await applyUpdate(hash, movie, probe, { manual: true, objectRef })
+                        } catch (error) {
+                            warn('Manual update failed', error)
+                            L.Noty.show(text('Не удалось безопасно обновить раздачу', 'Could not safely update the torrent'))
+                        }
+                    }
+                },
+                {
+                    title: text('Оставить текущую', 'Keep current'),
+                    onSelect: () => restoreController(manualController)
+                }
+            ],
+            onBack: () => restoreController(manualController)
+        })
+    }
+
+    function addUpdateMenu(menu, hash, movie, files, objectRef) {
+        if (!enabled() || !hash || !movie || !movie.id || !Array.isArray(menu)) return
+        const cached = runtime.candidates.get(hash)
+        const controller = (() => {
+            const L = lampa()
+            try { return L.Controller.enabled().name } catch (_) { return 'content' }
+        })()
+
+        if (cached && ['revision', 'unknown', 'new_episodes'].includes(cached.classification)) {
+            menu.push({
+                title: text('Обновить раздачу', 'Update torrent'),
+                subtitle: cached.classification === 'new_episodes'
+                    ? `${text('Найдена новая версия', 'New revision found')}: ${cached.old_count} → ${cached.new_count}`
+                    : text('Найдена новая версия раздачи', 'A new torrent revision is available'),
+                onSelect: () => {
+                    const L = lampa()
+                    try { L.Controller.toggle(controller) } catch (_) {}
+                    manualCheck(hash, movie, files, objectRef)
+                }
+            })
+        }
+
+        menu.push({
+            title: text('Проверить обновление', 'Check for update'),
+            subtitle: text('Только точное совпадение исходной раздачи', 'Exact tracker release match only'),
+            onSelect: () => {
+                const L = lampa()
+                try { L.Controller.toggle(controller) } catch (_) {}
+                manualCheck(hash, movie, files, objectRef)
+            }
+        })
+
+        menu.push({
+            title: text('Ручное обновление', 'Manual update'),
+            subtitle: text('Выбрать другую раздачу через штатный поиск Lampa', 'Choose another release using Lampa torrent search'),
+            onSelect: () => {
+                const L = lampa()
+                try { L.Controller.toggle(controller) } catch (_) {}
+                startManualRecovery(hash, movie, files, objectRef)
+            }
+        })
+
+        menu.push({
+            title: text('Обновить метаданные', 'Refresh metadata'),
+            subtitle: text('Обновить изображение и данные карточки TMDB', 'Refresh poster and TMDB card metadata'),
+            onSelect: () => {
+                const L = lampa()
+                try { L.Controller.toggle(controller) } catch (_) {}
+                refreshTorrentMetadata(hash, movie, objectRef)
+            }
+        })
+    }
+
+    function onTorrent(e) {
+        if (!enabled() || !e) return
+
+        if (e.type === 'render') {
+            bindRecoveryTorrentItem(e)
+            return
+        }
+
+        if (e.type !== 'onenter' || !e.element) return
+        const metadata = selectionMetadata(e.element)
+        runtime.pendingSelection = metadata
+        debug('Parser selection', {
+            tracker: e.element.Tracker || '',
+            trackerId: e.element.TrackerId || '',
+            hasDetails: !!e.element.Details,
+            hasGuid: !!e.element.Guid,
+            hasInfoHash: !!resultInfoHash(e.element),
+            releaseKey: metadata && metadata.identity && metadata.identity.key
+        })
+        if (!metadata) log('Selected result has no stable Details/Guid identity; updater will not bind it')
+    }
+
+    function onTorrentFile(e) {
+        if (!enabled() || !e) return
+
+        if (e.type === 'list_close') {
+            const oldHash = runtime.listHash
+            runtime.listHash = null
+            if (oldHash && runtime.pendingCleanup.has(oldHash) && runtime.activePlayerHash !== oldHash) cleanupOld(oldHash)
+            return
+        }
+
+        if (e.type === 'render' && e.element) {
+            const hash = String(e.element.torrent_hash || '').toLowerCase()
+            const movie = e.params && e.params.movie || e.element.card
+            if (!hash || !movie || !movie.id) return
+
+            runtime.listHash = hash
+            if (!runtime.sessions.has(hash)) runtime.sessions.set(hash, { movie, files: e.items || [], checked: false })
+            const session = runtime.sessions.get(hash)
+            session.movie = movie
+            session.files = e.items || session.files || []
+
+            if (!session.bound) {
+                session.bound = true
+                bindPendingSelection(hash, movie, session.files).finally(() => {
+                    if (!session.checked) {
+                        session.checked = true
+                        checkForUpdate(hash, movie, session.files, { allowAuto: currentComponent() !== 'mytorrents' })
+                    }
+                })
+            }
+            return
+        }
+
+        if (e.type === 'onlong' && e.element && e.menu) {
+            const hash = String(e.element.torrent_hash || '').toLowerCase()
+            const movie = e.params && e.params.movie || e.element.card
+            const session = currentSession(hash)
+            addUpdateMenu(e.menu, hash, movie, session && session.files || e.items || [], null)
+        }
+    }
+
+    function onActivity(e) {
+        if (!e || e.type !== 'destroy') return
+
+        if (e.component === 'torrents' && runtime.recovery && e.object && e.object.tor_updater_recovery) {
+            runtime.recovery = null
+        }
+
+        if (e.component !== 'mytorrents') return
+
+        const hashes = [...runtime.pendingCleanup.keys()]
+        hashes.forEach((hash) => { if (!hashBusy(hash)) cleanupOld(hash) })
+    }
+
+    function onMyTorrents(e) {
+        if (!enabled() || !e || e.type !== 'onlong' || !e.object || !e.menu) return
+        const object = e.object
+        const movie = object.data && object.data.movie
+        const hash = String(object.hash || '').toLowerCase()
+        const session = currentSession(hash)
+        addUpdateMenu(e.menu, hash, movie, session && session.files || object.file_stats || [], object)
+    }
+
+    function onPlayerStart(data) {
+        runtime.activePlayerHash = data && data.torrent_hash ? String(data.torrent_hash).toLowerCase() : null
+    }
+
+    function onPlayerDestroy() {
+        const old = runtime.activePlayerHash
+        runtime.activePlayerHash = null
+        if (old && runtime.pendingCleanup.has(old) && runtime.listHash !== old) cleanupOld(old)
+    }
+
+
+    function registerSettings() {
+        const L = lampa()
+        if (!L || !L.SettingsApi) return
+
+        try {
+            L.SettingsApi.addComponent({
+                component: COMPONENT,
+                name: text('Обновление сериалов', 'Torrent updater'),
+                icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M12 4V1L8 5l4 4V6a6 6 0 1 1-5.65 4H4.26A8 8 0 1 0 12 4Z"/></svg>'
+            })
+
+            L.SettingsApi.addParam({
+                component: COMPONENT,
+                param: { name: 'tor_updater_enabled', type: 'trigger', default: true },
+                field: {
+                    name: text('Следить за обновлениями раздач', 'Follow torrent revisions'),
+                    description: text('Плагин не меняет штатный поиск Lampa и работает только при точном совпадении раздачи.', 'Does not replace Lampa search and only acts on exact release matches.')
+                }
+            })
+
+            L.SettingsApi.addParam({
+                component: COMPONENT,
+                param: { name: 'tor_updater_auto', type: 'trigger', default: true },
+                field: {
+                    name: text('Автообновление при новых сериях', 'Auto-update when new episodes appear'),
+                    description: text('Автоматически заменять только если новая версия содержит все старые серии и добавляет новые.', 'Replace automatically only when the new revision is a strict episode superset.')
+                }
+            })
+
+            L.SettingsApi.addParam({
+                component: COMPONENT,
+                param: { name: 'tor_updater_interval', type: 'select', values: '1,3,6,12,24', default: String(DEFAULT_CHECK_HOURS) },
+                field: {
+                    name: text('Интервал фоновой проверки, часы', 'Background check interval, hours'),
+                    description: text('Проверка выполняется лениво при открытии торрента.', 'Checks run lazily when a torrent is opened.')
+                }
+            })
+
+            L.SettingsApi.addParam({
+                component: COMPONENT,
+                param: { name: 'tor_updater_debug', type: 'trigger', default: false },
+                field: {
+                    name: text('Диагностический лог', 'Diagnostic logging'),
+                    description: text('Пишет безопасную сводку полей parser result без URL и magnet.', 'Logs a safe parser-result field summary without URLs or magnets.')
+                }
+            })
+
+            L.SettingsApi.addParam({
+                component: COMPONENT,
+                param: { type: 'title' },
+                field: { name: `Lampa Tor Updater v${VERSION}` }
+            })
+        } catch (error) {
+            warn('Settings registration failed', error)
+        }
+    }
+
+    function install() {
+        const L = lampa()
+        if (!L || !L.Listener || !L.Player) return
+        if (window.__lampa_tor_updater_installed) return
+        window.__lampa_tor_updater_installed = true
+
+        registerSettings()
+        L.Listener.follow('torrent', onTorrent)
+        L.Listener.follow('torrent_file', onTorrentFile)
+        L.Listener.follow('mytorrents', onMyTorrents)
+        L.Listener.follow('activity', onActivity)
+        L.Player.listener.follow('start', onPlayerStart)
+        L.Player.listener.follow('destroy', onPlayerDestroy)
+
+        setTimeout(cleanupPersistedSuperseded, 2000)
+        log(`v${VERSION} installed`, BUILD_DATE)
+    }
+
+    function init() {
+        const L = lampa()
+        if (!L) return
+        if (typeof window !== 'undefined' && window.appready) install()
+        else if (L.Listener && L.Listener.follow) {
+            const ready = (e) => {
+                if (e && e.type === 'ready') {
+                    try { L.Listener.remove('app', ready) } catch (_) {}
+                    install()
+                }
+            }
+            L.Listener.follow('app', ready)
+        }
+    }
+
+    if (typeof globalThis !== 'undefined' && globalThis.__LAMPA_TOR_UPDATER_TEST__) {
+        globalThis.LampaTorUpdaterInternals = {
+            normalizeIdentityUrl,
+            stableHash,
+            releaseIdentity,
+            base32ToHex,
+            infoHashFromMagnet,
+            resultInfoHash,
+            sameRelease,
+            episodeKey,
+            compareEpisodeMaps,
+            parserQuery,
+            mergeMissingMetadata,
+            lampaTorrentTitle,
+            lampaMovieTitle,
+            metadataRefreshTitle,
+            playableFileCount
+        }
+    }
+
+    if (typeof window !== 'undefined') init()
+})()
