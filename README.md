@@ -9,7 +9,7 @@ parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pag
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
 Versions on the TV (2026-10-18): ru-torrents 1.7.0, similar 1.1.0, quick-start 1.0.0, no-dmca 1.1.0, poster-heal 1.2.0,
-no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.1.0.
+no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.2.0.
 
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
   whatever sort is chosen in «Сортировать», Russian releases come first, then the rest; inside each group
@@ -36,6 +36,6 @@ no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.1.0.
   api.themoviedb.org URLs, $.ajax and the Android app's native requests) goes to the host picked by asking api.themoviedb.org →
   lampa.byskaz.ru/tmdb/api → tmdb-api.rootu.top → tmdbapi.bylampa.online → apitmdb.cub.best in turn (not apitmdb.cub.black: cache-only, redirects misses to the blocked TMDB); picked again at start, when the network returns, when Lampa is visible
   again and after 3 failed TMDB requests in 15 s.
-- `catalog-next.js` — «Ещё» lists load ahead: two pages as soon as the list opens, and two more whenever the focus gets
+- `catalog-next.js` — card-grid lists («Ещё», filter results, «Рекомендуем», «Релизы», «Избранное»/«История», «Подписки»…) load ahead: two pages as soon as the list opens, and two more whenever the focus gets
   within 6 rows of the last loaded row (fixes Lampa's list stalling at the end of page 1 when scrolled through quickly:
   its scroll asks for a page only when it moves, and ignores the first second).

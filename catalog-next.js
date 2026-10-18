@@ -8,6 +8,8 @@
  * The first page is 20 cards = 4 rows: pressed down through them within that second, the focus sits on the last row,
  * further presses move nothing, and no page ever comes (TV, «Прошлый год», 2026-10-18). A failed page request ends the
  * same way.
+ * The same paging (core «Full» card grid) serves «Рекомендуем», «Релизы», «Избранное»/«История», «Подписки» and the
+ * rest, so every such list is handled, recognised by its shape rather than its name.
  * Here: a list that opens asks for its second page as soon as it may (1 s after build); every Down press that leaves
  * the focus 6 rows or fewer above the last loaded row (cards on screen plus those loaded and not yet drawn) asks for
  * two more pages, one after the other. Pages are asked through the list's own onEnd, so its guards (one request at a
@@ -16,15 +18,20 @@
 (function () {
     'use strict';
     if (window.lampa_tv_catalog_next) return;
-    window.lampa_tv_catalog_next = '1.1.0';
+    window.lampa_tv_catalog_next = '1.2.0';
 
     var AHEAD_ROWS = 6, PAGES = 2;
+
+    // any card-grid list (core «Full» category: category_full, recomend, relise, favorite, subscribes, mytorrents…):
+    // it pages through scroll.onEnd and buffers loaded cards in `loaded` / `limit_view`
+    function isGrid(comp) {
+        return !!(comp && comp.scroll && typeof comp.scroll.onEnd === 'function' && Array.isArray(comp.loaded) && typeof comp.limit_view === 'number' && comp.object);
+    }
 
     function list() {
         var active = Lampa.Activity.active();
         var comp = active && active.activity && active.activity.component;
-        if (!active || active.component !== 'category_full' || !comp || !comp.scroll || typeof comp.scroll.onEnd !== 'function') return null;
-        return comp;
+        return isGrid(comp) ? comp : null;
     }
 
     function whenIdle(comp, fn) { // the list is built and has no page request in flight
@@ -64,11 +71,16 @@
     }
 
     Lampa.Listener.follow('activity', function (e) {
-        if (e.type !== 'start' || e.component !== 'category_full') return;
-        setTimeout(function () {
-            var comp = list();
-            if (comp && !comp.__morePreloaded && comp.object.page === 1) { comp.__morePreloaded = true; more(comp, 1); }
-        }, 300);
+        if (e.type !== 'start' || !e.object) return;
+        var tries = 0;
+        (function wait() { // the grid exists only once its first page has come (a slow answer takes seconds)
+            var comp = e.object.activity && e.object.activity.component;
+            if (isGrid(comp)) {
+                if (!comp.__morePreloaded && comp.object.page === 1) { comp.__morePreloaded = true; more(comp, 1); }
+                return;
+            }
+            if (++tries < 100 && !(comp && comp.destroyed)) setTimeout(wait, 200);
+        })();
     });
 
     Lampa.Keypad.listener.follow('down', function () {
