@@ -1,12 +1,12 @@
-// node test/filter-cover.test.cjs
-// ru-torrents filterCover: Lampa's filter menu (voices / trackers / seasons and their order) built from the cover subset
+// node test/filter-menu.test.cjs
+// ru-torrents filterMenu: Lampa's filter menu (voices / trackers / seasons and their order) built from the stand-in releases
 // must equal the menu built from all releases. `menu` replicates the loop of components/torrents.js buildFilterd (Lampa 3.3.7).
 const fs = require('fs');
 const path = require('path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'ru-torrents.js'), 'utf8');
 const VOICES = JSON.parse(/var VOICES = (\[.*?\]);/.exec(src)[1]);
 const body = src.slice(src.indexOf('    var VOICES_LOW'), src.indexOf('    function patch()'));
-const filterCover = new Function('VOICES', body + 'return filterCover;')(VOICES);
+const filterMenu = new Function('VOICES', body + 'return filterMenu;')(VOICES);
 
 function menu(results, voices) {
   const voice = ['any', 'dub', 'poly', 'two', 'amateur'], tracker = ['any'], seasons = [];
@@ -28,12 +28,14 @@ const copy = (x) => JSON.parse(JSON.stringify(x));
 let failed = 0;
 function check(name, results, voices = VOICES) {
   const full = menu(copy(results), voices);
-  const sub = filterCover(results);
+  const filled = copy(results); menu(filled, voices); // what Lampa fills into releases without info
+  const sub = filterMenu(results);
   const part = menu(copy(sub), voices);
-  const ok = full === part;
+  const sameInfo = results.every((e, i) => JSON.stringify(e.info) === JSON.stringify(filled[i].info));
+  const ok = full === part && sameInfo;
   if (!ok) failed++;
   console.log((ok ? 'ok   ' : 'FAIL ') + name + ': ' + results.length + ' → ' + sub.length);
-  if (!ok) { console.log('  all   ', full.slice(0, 300)); console.log('  cover ', part.slice(0, 300)); }
+  if (!ok) { console.log('  all   ', full.slice(0, 300)); console.log('  menu  ', part.slice(0, 300)); console.log('  info filled like Lampa:', sameInfo); }
 }
 
 const got = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'got-880-results.json'), 'utf8'));

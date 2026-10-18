@@ -13,14 +13,14 @@
  * 4) Opening a card already asks the parsers; its «Торренты» list then opens with that answer (one kept, see below).
  * 5) The release last opened for that card is added to TorrServer while the card is open, so pressing it shows its
  *    files at once (see warmUp).
- * 6) The filter menu is built from the releases that bring something new to it — no 1-s freeze on a long list (see filterCover).
+ * 6) The filter menu is worked out here and handed to Lampa in a few stand-in releases — no freeze on a long list (see filterMenu).
  * Patched: Parser.get callback (merge + rank) and the torrents component's sortWithViewed, which Lampa
  * calls after every sort (components/torrents.js sortResults). Already-opened releases stay pinned on top.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.9.0';
+    window.lampa_tv_ru_torrents = '1.10.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -187,40 +187,58 @@
     // 6) Filter menu without the freeze. Lampa builds it (components/torrents.js buildFilterd) by checking every release
     //    against each of its 911 voice names: Game of Thrones, 880 releases → 997 ms of frozen screen on the TV
     //    (2026-10-18), every time «Торренты» opens. The menu is only the union of voices / trackers / seasons in order of
-    //    discovery, so Lampa gets just the releases that bring something new (the first one for each voice, tracker,
-    //    season; ones without `info`, which that loop fills in): 880 → 36, same menu, ~220 ms.
-    //    VOICES = Lampa 3.3.7's list (TitleParser voices). A voice Lampa adds later is still found through releases'
-    //    `info.voices` (a name we don't know keeps its first release).
+    //    discovery, so it is found here at once and Lampa gets a few stand-in releases carrying exactly that, in that
+    //    order: every tracker and season in the first one, the voices in runs of Lampa's list order (one release each,
+    //    Lampa walks its list per release). Same menu; the real releases get `info` filled in as Lampa would.
+    //    VOICES = Lampa 3.3.7's list (TitleParser voices); a name Lampa adds later still comes through `info.voices`.
     var VOICES = ["Анастасия Гайдаржи + Андрей Юрченко","Студии Суверенного Лепрозория","Студия Пиратского Дубляжа","IgVin &amp; Solncekleshka","Gremlin Creative Studio","Alternative Production","HelloMickey Production","Bubble Dubbing Company","Н.Севастьянов seva1988","XDUB Dorama + Колобок","Мобильное телевидение","СПД - Сладкая парочка","Selena International","Black Street Records","Intra Communications","BBC Saint-Petersburg","Melodic Voice Studio","Voice Project Studio","Несмертельное оружие","Петербургский дубляж","Studio Victory Аsia","Asian Miracle Group","True Dubbing Studio","Lizard Cinema Trade","National Geographic","Позитив-Мультимедиа","Премьер Мультимедиа","Уолт Дисней Компани","Parovoz Production","Shadow Dub Project","Zone Vision Studio","Анастасия Гайдаржи","The Kitchen Russia","Малиновский Сергей","Family Fan Edition","Paramount Pictures","Иванова и П. Пашут","Так Треба Продакшн","Хихикающий доктор","Четыре в квадрате","Project Web Mania","Paramount Channel","Back Board Cinema","Zoomvision Studio","Universal Channel","RedDiamond Studio","НеЗупиняйПродакшн","Селена Интернешнл","Студия «Стартрек»","Колодій Трейлерів","Universal Russia","Paramount Comedy","Андрей Питерский","Реальный перевод","MC Entertainment","Екатеринбург Арт","Lucky Production","Cowabunga Studio","Анатолий Ашмарин","Васька Куролесов","Brain Production","Квадрат Малевича","Первый канал ОРТ","Русский Репортаж","Сolumbia Service","Sunshine Studio","GreenРай Studio","New Dream Media","DeadLine Studio","Воробьев Сергей","DeeAFilm Studio","Николай Дроздов","Денис Шадинский","Cartoon Network","Amazing Dubbing","Volume-6 Studio","Антонов Николай","Ульпаней Эльром","Cinema Prestige","AnimeSpace Team","CinemaSET GROUP","XvidClub Studio","З Ранку До Ночі","Максим Логинофф","Студия Горького","Ушастая озвучка","Hamster Studio","Agatha Studdio","SunshineStudio","Kulzvuk Studio","Вартан Дохалов","Viasat History","DIVA Universal","KosharaSerials","Julia Prosenuk","SovetRomantica","Mallorn Studio","TUMBLER Studio","CrazyCatStudio","Syfy Universal","Horizon Studio","Анатолий Гусев","Максим Жолобов","RedRussian1337","Creative Sound","Garsu Pasaulis","visanti-vasaer","GoodTime Media","Кирдин | Stalk","Anything-group","Goodtime Media","Jakob Bellmann","Витя «говорун»","Л. Володарский","Леша Прапорщик","Медиа-Комплекс","Прайд Продакшн","Русский дубляж","Союзмультфильм","Студия Колобок","Red Head Sound","LE-Production","ViruseProject","Victory-Films","Jetvis Studio","Greb&Creative","5-й канал СПб","Dream Records","Filiza Studio","SHIZA Project","Bars MacAdams","Nazel & Freya","Vulpes Vulpes","Храм Дорам ТВ","АРК-ТВ Studio","Film Prestige","Rainbow World","Banyan Studio","Bonsai Studio","Мадлен Дюваль","VO-Production","Voice Project","Flarrow Films","Видеопродакшн","Хоррор Мэйкер","Lizard Cinema","Фортуна-Фильм","VIP Serial HD","Старый Бильбо","Семыкина Юлия","Штамп Дмитрий","Arasi project","ARRU Workshop","Byako Records","FiliZa Studio","Gezell Studio","HamsterStudio","PCB Translate","Renegade Team","Sci-Fi Russia","The Mike Rec.","VO-production","Мика Бондарик","Наталья Гурзо","Премьер Видео","Трамвай-фильм","Кубик в Кубе","Кураж-Бамбей","Первый канал","Trdlo.studio","Студия Райдо","AniLibria.TV","RG.Paravozik","Profix Media","AlphaProject","AnimeReactor","Кармен Видео","Korean Craze","Sony Channel","Train Studio","Фильмэкспорт","Кирилл Сагач","ViP Premiere","Деваль Видео","RussianGuy27","HaseRiLLoPaW","Сергей Дидок","Mystery Film","Psychotronic","КонтентикOFF","Говинда Рага","Horror Maker","Альтера Парс","Видеоимпульс","Мьюзик-трейд","Тоникс Медиа","Элегия фильм","Oneinchnales","Кинопремьера","A. Lazarchuk","Animereactor","BadCatStudio","DreamRecords","General Film","Ivnet Cinema","RG Paravozik","sweet couple","VictoryFilms","VulpesVulpes","Wayland team","Гей Кино Гид","Нурмухаметов","Е. Хрусталёв","К. Поздняков","Н. Золотухин","Новый Дубляж","Р. Янкелевич","С. Кузьмичёв","С. Щегольков","Синема Трейд","Синта Рурони","Точка Zрения","КОМНАТА ДИДИ","FocusStudio","Gears Media","GladiolusTV","RecentFilms","NEON Studio","Володарский","Мастер Тэйп","XDUB Dorama","Sound-Group","Sony Sci-Fi","Good People","JWA Project","Nika Lenina","RiZZ_fisher","New Records","КураСгречей","Неоклассика","CrezaStudio","Видеосервис","BTI Studios","Eurochannel","Варус-Видео","HiWay Grope","Эй Би Видео","Nickelodeon","StudioFilms","Paul Bunyan","Inter Video","Franek Monk","Другое кино","Севастьянов","Lazer Video","Max Nabokov","Завгородний","SnowRecords","Crunchyroll","Gold Cinema","Прямостанов","Огородников","Кенс Матвей","1001 cinema","Cactus Team","Description","DVD Classic","Gala Voices","hungry_inri","Neoclassica","Oghra-Brown","Rebel Voice","Saint Sound","SakuraNight","TF-AniGroup","TrainStudio","Zone Studio","Zone Vision","Варус Видео","Г. Либергал","Г. Румянцев","Е. Гаевский","И. Сафронов","И. Степанов","Лазер Видео","Малиновский","Новый Канал","Петербуржец","С. Визгунов","С. Кузнецов","Студия Трёх","Цікава Ідея","Я. Беллманн","Studio Band","ApofysTeam","Карповский","LevshaFilm","1001cinema","CP Digital","Интерфильм","Комедия ТВ","Ох! Студия","SilverSnow","NewStation","StudioBand","Rain Death","Первый ТВЧ","HiWayGrope","Animegroup","Shachiburi","CactusTeam","Sony Turbo","AXN Sci-Fi","Т.О Друзей","West Video","East Dream","Sound Film","MaxMeister","VoicePower","CoralMedia","VSI Moscow","VGM Studio","Студия NLS","Хуан Рохас","TatamiFilm","диктор CDV","Pazl Voice","Саня Белый","Мост-Видео","AimaksaLTV","Contentica","Инфо-фильм","Электричка","Бусов Глеб","AvePremier","BraveSound","CinemaTone","DniproFilm","ELEKTRI4KA","eraserhead","Fox Russia","Mega-Anime","MifSnaiper","Nice-Media","PiratVoice","Postmodern","Reanimedia","Sky Voices","SkyeFilmTV","Костюкевич","Толстобров","Б. Федоров","Ващенко С.","Глуховский","Держиморда","Е. Гранкин","И. Еремеев","К. Филонов","Мост Видео","Н. Антонов","Н. Дроздов","Новый диск","Переводман","С. Казаков","С. Лебедев","С. Макашов","Союз Видео","ТВ XXI век","Ю. Немахов","Dream Cast","Причудики","NewStudio","Red Media","Синема УС","SDI Media","CasStudio","turok1990","HighHopes","AniLibria","FanStudio","Sedorelli","Flux-Team","Kobayashi","KinoGolos","Fox Crime","Discovery","GREEN TEA","Persona99","3df voice","ShinkaDan","АрхиТеатр","СВ-Студия","FilmsClub","fiendover","Воротилин","LakeFilms","Кириллица","AniPLague","JoyStudio","Формат AB","AveBrasil","Невафильм","OnisFilms","Neo-Sound","Муравский","BeniAffet","Янкелевич","AveDorama","Киномания","CBS Drama","Novamedia","NewComers","Ghostface","Sephiroth","Andre1288","DoubleRec","Astana TV","Останкино","Видеобаза","CLS Media","Seoul Bay","Хрусталев","Золотухин","Videogram","AAA-Sound","Epic Team","GoodVideo","Gramalant","INTERFILM","Kinomania","No-Future","RainDeath","RATTLEBOX","Sawyer888","SmallFilm","SOLDLUCK2","SpaceDust","Timecraft","Total DVD","Video-BIZ","VIZ Media","Васильцев","Григорьев","ААА-sound","Амальгама","Весельчак","Деньщиков","Шадинский","ЕА Синема","Зереницын","И. Клушин","Имидж-Арт","Карапетян","Машинский","Мительман","Рыжий пес","С. Дьяков","Самарский","СВ Студия","Советский","Солодухин","ТО Друзей","Ю. Сербин","Ю. Товбин","AnimeVost","Omskbird","LostFilm","AlexFilm","IdeaFilm","ColdFilm","KinoView","Jimmy J.","Дольский","Гаврилов","Алексеев","Визгунов","Либергал","Кузнецов","Горчаков","Gravi-TV","Murzilka","STEPonee","NovaFilm","Kerems13","Fox Life","AzOnFilm","SorzTeam","Гаевский","СВ-Дубль","GoldTeam","DexterTV","AniMedia","ANIvoice","JeFerSon","RealFake","AniMaunt","TurkStar","Медведев","FilmGate","Логинофф","Loginoff","Animedub","GostFilm","ClubFATE","Hallmark","Тимофеев","Дьяконов","Лексикон","Superbit","VideoBIZ","WestFilm","kubik&ko","Марченко","Журавлев","Карусель","Barin101","Amalgama","Кинолюкс","AB-Video","Пирамида","Нарышкин","Дубровин","Махонько","Хлопушка","АрхиАзия","Ultradox","Мельница","Бессонов","Бахурани","Индия ТВ","AdiSound","ALEKS KV","AuraFilm","DeadLine","Extrabit","Foxlight","GetSmart","ImageArt","Marclail","metalrus","Milirina","MiraiDub","MOYGOLOS","OMSKBIRD","Radamant","RoxMarty","st.Elrom","VashMax2","VendettA","XL Media","Артемьев","Васильев","Савченко","Воронцов","Войсовер","Домашний","Е. Лурье","Е. Рудой","Ист-Вест","ЛанселаП","Ленфильм","Заугаров","Мосфильм","Оверлорд","С. Рябов","Супербит","Толмачев","Ю. Живов","Paradox","BaibaKo","Jaskier","Колобок","Михалев","Дохалов","SoftBox","MUZOBOZ","ZM-Show","Levelin","Немахов","Яроцкий","BadBajo","СВ-Кадр","Позитив","RusFilm","Назаров","Сыендук","Яковлев","Lord32x","Onibaku","Trina_D","Hamster","AniFilm","HDrezka","ShowJet","BukeDub","SomeWax","Anifilm","TVShows","РуФилмс","Пифагор","AniStar","Netflix","Octopus","MixFilm","Рутилов","Elysium","FireDub","AveTurk","Багичев","Дасевич","Twister","Морозов","Sam2007","SesDizi","AnyFilm","Urasiko","Wakanim","Латышев","Ващенко","Сонотек","Никитин","Сонькин","Кипарис","Королёв","RUSCICO","Филонов","Ошурков","Герусов","Пятница","5 канал","Amalgam","Anistar","AniWayt","datynet","DeadSno","Eladiel","ELYSIUM","F-TRAIN","FoxLife","Janetta","Kолобок","LeDoyen","Liga HQ","lord666","Macross","McElroy","NemFilm","OpenDub","PashaUp","SOFTBOX","To4kaTV","TV 1000","VicTeam","ZM-SHOW","Клюквин","Матвеев","Смирнов","Бибиков","Абдулов","Данилов","sf@irat","Королев","Люсьена","Омикрон","Парадиз","Пепелац","Синхрон","Сокуров","Хихидок","AniBaza","Ozz.tv","Сербин","Кравец","SNK-TV","Amedia","Гоблин","Kiitos","Есарев","Санаев","Шварко","Карцев","Кашкин","Мудров","Иванов","Котова","Kansai","ZEE TV","AniDUB","Ancord","Berial","Cuba77","OSLIKt","Tycoon","Курдов","Кошкин","Stevie","Лагута","Кондор","Киреев","FocusX","Пронин","neko64","Shaman","GalVid","D.I.M.","Н-Кино","Товбин","binjak","Акцент","Козлов","Нева-1","Milvus","Готлиб","Zerzia","Дьяков","Вольга","Строев","Alezan","ДиоНиК","Стасюк","TV1000","NewDub","Набиев","Светла","Nastia","Emslie","100 ТВ","4u2ges","Azazel","BD CEE","Boльгa","den904","Elegia","Gemini","Jetvis","JimmyJ","KANSAI","kiitos","L0cDoG","LeXiKC","Lisitz","madrid","Mikail","MrRose","Ozz TV","Prolix","RedDog","Rumble","Satkur","Selena","Suzaku","WiaDUB","WVoice","Zendos","Агапов","Акопян","Шуваев","АБыГДе","Акалит","Альянс","Анубис","Anubis","Арк-ТВ","Бойков","Вихров","Векшин","Гризли","Гундос","Пучков","Живаго","Жучков","Зебуро","Килька","Лапшин","Лизард","Миняев","НЕВА 1","НЛО-TV","Ракурс","Россия","С.Р.И.","KOleso","Гуртом","ТВ СПб","Швецов","OnWave","DZUSKI","Kerob","To4ka","Чадов","Живов","ВГТРК","Elrom","Игмар","Котов","РенТВ","Рыбин","Ozeon","Cmert","Штейн","zamez","Гланц","Белов","Anika","Lupin","Ryc99","ko136","Рябов","Amber","Arisu","DeMon","Велес","Акира","Ворон","Рудой","С.Р.И","Лайко","D2Lab","Jetix","Попов","Хабар","Интер","AniUA","D2lab","erogg","IНТЕР","JetiX","PaDet","RinGo","seqw0","SHIZA","Solod","ssvss","Мишин","АнВад","Бигыч","Рукин","Штамп","Новий","Перец","Райдо","ТВЧ 1","Laci","ETV+","Vano","Jade","RAIM","Andy","Нота","Твин","ИДДК","Voiz","CPIG","Dice","Gits","ICTV","jept","KIHO","Line","SGEV","Tori","Troy","Twix","Чуев","Инис","Ирэн","ТВ-3","ТВИН","ДТВ","FOX","НТВ","СТС","ICG","ТВЦ","2x2","MTV","Oni","JAM","AMS","DDV","AMC","НСТ","IVI","КТК","Че!","MGM","МИР","ТНТ","FDV","ТВ3","LDV","1+1","2+2","2х2","AOS","CDV","MCA","QTV","TB5","VHS","АМС","ГКГ","ИГМ","НТН","РТР","ТВ6","ТРК","UKR","D1","R5","К9"];
-    var VOICES_LOW = {};
-    VOICES.forEach(function (v) { VOICES_LOW[v.toLowerCase()] = 1; });
+    var VOICES_LOW = VOICES.map(function (v) { return v.toLowerCase(); });
 
-    function filterCover(list) {
-        var SEP = '\n', pick = [], titles = [], infos = [], tAt = [], iAt = [], tLen = 0, iLen = 0, seen = {};
-        var first = function (key, i) { if (!seen[key]) { seen[key] = 1; pick[i] = true; } };
+    // Lampa's TitleParser.voices: names of the list found in the title, in list order
+    function titleVoices(title) {
+        var low = String(title || '').toLowerCase(), out = [];
+        VOICES.forEach(function (v, k) { if (out.indexOf(v) < 0 && low.indexOf(VOICES_LOW[k]) >= 0) out.push(v); });
+        return out;
+    }
+
+    function filterMenu(list) {
+        if (!list.length) return [];
+        var titles = [], at = [], len = 0, trackers = [], seasons = [], infoFirst = Object.create(null), found = [];
         list.forEach(function (e, i) {
-            var names = e.info && e.info.voices ? e.info.voices.map(function (v) { return String(v).toLowerCase(); }) : [];
-            var t = String(e.Title || '').toLowerCase() + SEP, v = SEP + (names.length ? names.join(SEP) + SEP : '');
-            tAt.push(tLen); titles.push(t); tLen += t.length;
-            iAt.push(iLen); infos.push(v); iLen += v.length;
-            if (!e.info) pick[i] = true;
-            String(e.Tracker || '').split(',').forEach(function (x) { first('t' + x.trim(), i); });
-            ((e.general && e.general.seasons) || []).forEach(function (s) { first('s' + s, i); });
-            names.forEach(function (n) { if (!VOICES_LOW[n]) first('v' + n, i); });
+            if (!e.info) e.info = { voices: titleVoices(e.Title) };
+            var t = String(e.Title || '').toLowerCase() + '\n';
+            at.push(len); titles.push(t); len += t.length;
+            String(e.Tracker || '').split(',').forEach(function (x) { x = x.trim(); if (trackers.indexOf(x) < 0) trackers.push(x); });
+            ((e.general && e.general.seasons) || []).forEach(function (x) { x += ''; if (seasons.indexOf(x) < 0) seasons.push(x); });
+            (e.info.voices || []).forEach(function (v) { v = String(v).toLowerCase(); if (!(v in infoFirst)) infoFirst[v] = i; });
         });
-        titles = titles.join(''); infos = infos.join('');
-        var owner = function (at, pos) {
+        titles = titles.join('');
+        // pairs of letters present in the titles: a voice with a pair that is not there can't be in any title (most of the 911)
+        var pairs = new Set();
+        for (var c = 0; c + 1 < titles.length; c++) pairs.add(titles.charCodeAt(c) * 65536 + titles.charCodeAt(c + 1));
+        var owner = function (pos) {
             var lo = 0, hi = at.length - 1;
             while (lo < hi) { var mid = (lo + hi + 1) >> 1; if (at[mid] <= pos) lo = mid; else hi = mid - 1; }
             return lo;
         };
-        VOICES.forEach(function (voice) {
-            var low = voice.toLowerCase(), at = Infinity;
-            var p = titles.indexOf(low); if (p >= 0) at = owner(tAt, p);
-            var q = infos.indexOf(SEP + low + SEP); if (q >= 0) at = Math.min(at, owner(iAt, q));
-            if (at !== Infinity) pick[at] = true;
+        VOICES_LOW.forEach(function (low, k) {
+            var first = low in infoFirst ? infoFirst[low] : Infinity, maybe = true;
+            for (var c = 0; c + 1 < low.length && maybe; c++) maybe = pairs.has(low.charCodeAt(c) * 65536 + low.charCodeAt(c + 1));
+            var p = maybe ? titles.indexOf(low) : -1;
+            if (p >= 0) first = Math.min(first, owner(p));
+            if (first !== Infinity) found.push({ i: first, k: k, name: VOICES[k] });
+            delete infoFirst[low];
         });
-        return list.filter(function (e, i) { return pick[i]; });
+        Object.keys(infoFirst).forEach(function (n, j) { found.push({ i: infoFirst[n], k: VOICES.length + j, name: n }); });
+        found.sort(function (x, y) { return x.i - y.i || x.k - y.k; });
+        var runs = [[]];
+        found.forEach(function (f, n) {
+            if (n && f.k <= found[n - 1].k) runs.push([]);
+            runs[runs.length - 1].push(f.name);
+        });
+        return runs.map(function (voices, n) {
+            return { Title: '', Tracker: n ? trackers[0] : trackers.join(','), info: { voices: voices }, general: { seasons: n ? [] : seasons } };
+        });
     }
 
     function patch() {
@@ -297,7 +315,7 @@
                 if (typeof buildFilterd === 'function') this.buildFilterd = function () {
                     var r = object && object.__ruJson, all = r && r.Results;
                     if (!all) return buildFilterd.apply(this, arguments);
-                    r.Results = filterCover(all);
+                    r.Results = filterMenu(all);
                     try { return buildFilterd.apply(this, arguments); } finally { r.Results = all; }
                 };
                 var base = this.sortWithViewed;
