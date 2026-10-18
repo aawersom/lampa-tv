@@ -12,7 +12,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.3.1';
+    window.lampa_tv_quick_start = '1.3.2';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -41,7 +41,8 @@
         var target = null, last = null, lastWatched = -1;
         list.forEach(function (r, i) {
             var t = r.element.timeline, p = percent(r.element);
-            if (p > 0 && t && t.updated && (!last || t.updated > last.element.timeline.updated)) last = r;
+            // equal times: the later episode (skipping through episodes in MX marks them all at once when the player closes)
+            if (p > 0 && t && t.updated && (!last || t.updated >= last.element.timeline.updated)) last = r;
             if (!target && p > 0 && p < 90) target = r;
             if (p >= 90) lastWatched = i;
         });
