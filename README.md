@@ -8,7 +8,7 @@ the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa k
 parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
-Versions on the TV (2026-10-18): ru-torrents 1.7.0, similar 1.1.0, quick-start 1.0.0, no-dmca 1.1.0, poster-heal 1.2.0,
+Versions on the TV (2026-10-18): ru-torrents 1.8.0, similar 1.1.0, quick-start 1.0.0, no-dmca 1.1.0, poster-heal 1.2.0,
 no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.3.1.
 
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
@@ -17,6 +17,8 @@ no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.3.1.
   The same torrent found by both parsers is shown once, with all its trackers and the larger seeders count.
   A film without its own filter opens unfiltered (no carry-over of the last filter used elsewhere).
   Opening a card already asks the parsers, so «Торренты» opens with the answer ready (one kept; dropped on use, card close or after 5 min).
+  The release last opened for that card is added to TorrServer while the card is open (kept alive until the card closes, another release
+  is pressed or 20 min pass), so pressing it lists the episodes at once: Game of Thrones 1-8 (243 GB) 12.2 s → 2.2 s on the TV.
 - `hide-kp.js` — hides the Kinopoisk rating badge on the movie card; IMDb and TMDB stay.
 - `similar.js` — bottom of a movie/series card: «Похожие» (shared TMDB themes + the director), cleaned «Рекомендации»,
   «Зрители IMDb смотрят также» (IMDb «More like this»); «Коллекция» unchanged; no title shown twice.
