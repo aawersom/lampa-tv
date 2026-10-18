@@ -8,7 +8,7 @@ the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa k
 parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
-Versions on the TV (2026-10-18): ru-torrents 1.9.0, similar 1.1.0, quick-start 1.0.1, no-dmca 1.1.0, poster-heal 1.2.0,
+Versions on the TV (2026-10-18): ru-torrents 1.9.0, similar 1.1.0, quick-start 1.1.0, no-dmca 1.1.0, poster-heal 1.2.0,
 no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.3.1, tor-updater 0.1.6-tv.1.
 
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
@@ -26,6 +26,8 @@ no-tv-channels 1.0.0, imdb-ratings 1.1.0, tmdb-route 1.1.0, catalog-next 1.3.1, 
   «Зрители IMDb смотрят также» (IMDb «More like this»); «Коллекция» unchanged; no title shown twice.
 - `quick-start.js` — a film's file starts at once (no 10 s countdown; film/series taken from the card, not the file name);
   in a series the focus goes to the next episode; Lampa stops waiting for TorrServer's preload once ~10 s of that video are buffered.
+  A card whose film/series was opened before (TorrServer keeps the release with its card) gets «Продолжить» next to «Смотреть»:
+  the file list of the release used last, in one press instead of «Смотреть» → «Торренты» → release.
 - `no-dmca.js` — no content restrictions: cards blocked «по требованию правообладателя» open (Lampa's blocked-id list is ignored, a CUB stub
   is replaced with the card details from TMDB); the LGBT filter is off (its list is never loaded).
 - `poster-heal.js` — posters come from the hosts fastest from Russian home ISPs, all reachable abroad too (lampa.byskaz.ru → nl.imagetmdb.com → pl.imagetmdb.com → imagetmdb.com → CUB → image.tmdb.org,

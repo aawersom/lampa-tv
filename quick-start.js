@@ -6,11 +6,12 @@
  * 2) Preload: Lampa waits until TorrServer has PreloadCache % of its cache (one size for every file). Here the wait
  *    ends once ~10 seconds of THIS video are buffered (file size / runtime × 10 s); never more than TorrServer's own
  *    preload size. Done by trimming `preload_size` in TorrServer's `&stat` answers that Lampa polls (torrent.js preload).
+ * 3) «Продолжить» on the card of a film/series opened before: the file list of the release used last, in one press.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.0.1';
+    window.lampa_tv_quick_start = '1.1.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -85,6 +86,43 @@
             };
         });
     }
+
+    // ---- 3) «Продолжить» on the card ----
+    // TorrServer keeps every release Lampa opened with its card (data.movie; kept across restarts with «Сохранять в базу»).
+    // The card of such a film/series gets «Продолжить» next to «Смотреть»: it opens the file list of the release used last
+    // (Lampa's own «Мои торренты» path), where 1) starts the film or puts the focus on the episode to watch.
+    // Instead of «Смотреть» → «Торренты» → release → episode.
+    var ICON = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M4 4.5v15L15 12z" fill="currentColor"/><rect x="16.5" y="4.5" width="3.5" height="15" rx="1" fill="currentColor"/></svg>';
+
+    function lastRelease(card, done) {
+        var url = Lampa.Torserver && Lampa.Torserver.url && Lampa.Torserver.url();
+        if (!url || !card || !card.id) return;
+        var net = new Lampa.Reguest(); // own request object: Lampa.Torserver's calls clear each other
+        net.timeout(5000);
+        net.silent(url.replace(/\/$/, '') + '/torrents', function (list) {
+            var best = null;
+            (Array.isArray(list) ? list : []).forEach(function (t) {
+                var m = null;
+                try { m = (typeof t.data === 'string' ? JSON.parse(t.data || '{}') : t.data || {}).movie; } catch (err) { /* not Lampa's */ }
+                if (m && m.id == card.id && !!m.name === !!card.name && (!best || t.timestamp > best.timestamp)) best = t;
+            });
+            if (best) done(best.hash);
+        }, function () {}, JSON.stringify({ action: 'list' }));
+    }
+
+    Lampa.Listener.follow('full', function (e) {
+        if (e.type !== 'complite' || !e.data || !e.data.movie || !e.object || !e.object.activity) return;
+        var card = e.data.movie, render = e.object.activity.render();
+        lastRelease(card, function (hash) {
+            var play = render.find('.button--play');
+            if (!play.length || render.find('.button--continue').length) return;
+            var btn = $('<div class="full-start__button selector button--continue">' + ICON + '<span>Продолжить</span></div>');
+            btn.on('hover:enter', function () { Lampa.Torrent.open(hash, card); });
+            play.after(btn);
+            // the card's buttons are collected when it gets the focus; this one comes later
+            if (Lampa.Controller.enabled().name === 'full_start') Lampa.Controller.collectionAppend(btn);
+        });
+    });
 
     console.log('QuickStart', 'ready', window.lampa_tv_quick_start);
 })();
