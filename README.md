@@ -8,7 +8,7 @@ the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa k
 parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
-Versions on the TV (2026-10-18): ru-torrents 1.11.0, similar 1.1.0, quick-start 1.2.0, no-dmca 1.1.0, poster-heal 1.2.0,
+Versions on the TV (2026-10-18): ru-torrents 1.12.0, similar 1.1.0, quick-start 1.3.0, no-dmca 1.1.0, poster-heal 1.2.0,
 no-tv-channels 1.0.0, imdb-ratings 1.2.0, tmdb-route 1.1.0, catalog-next 1.3.1, tor-updater 0.1.6-tv.1, imdb-filter 1.0.2.
 
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
@@ -20,7 +20,8 @@ no-tv-channels 1.0.0, imdb-ratings 1.2.0, tmdb-route 1.1.0, catalog-next 1.3.1, 
   The release last opened for that card is added to TorrServer while the card is open (kept alive until the card closes, another release
   is pressed or 20 min pass), so pressing it lists the episodes at once: Game of Thrones 1-8 (243 GB) 12.2 s → 2.2 s on the TV.
   A card whose film/series was opened before (TorrServer keeps the release with its card) gets «Продолжить» next to «Смотреть»:
-  the file list of the release whose files were opened last for that card (any path), in one press instead of «Смотреть» → «Торренты» → release;
+  plays at once — the episode to watch (in progress, else the next) or the film's file played last — from the release whose files were
+  opened last for that card (any path), instead of «Смотреть» → «Торренты» → release → file;
   the warm-up uses the same record.
   Lampa's filter menu is built from only the releases that add a voice, tracker or season to it (same menu): opening «Торренты»
   with 880 releases no longer freezes the screen for 1 s (`node test/filter-menu.test.cjs` checks the menu stays the same).

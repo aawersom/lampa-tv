@@ -6,12 +6,13 @@
  * 2) Preload: Lampa waits until TorrServer has PreloadCache % of its cache (one size for every file). Here the wait
  *    ends once ~10 seconds of THIS video are buffered (file size / runtime × 10 s); never more than TorrServer's own
  *    preload size. Done by trimming `preload_size` in TorrServer's `&stat` answers that Lampa polls (torrent.js preload).
- * («Продолжить» on the card lives in ru-torrents, next to the rest of the release logic.)
+ * 3) A list opened by «Продолжить» (ru-torrents, marked lampa_tv_play) plays at once: the episode chosen as in 1), or the film
+ *    file played last; nothing to choose (all watched, several equal files never played) → the list stays.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.2.0';
+    window.lampa_tv_quick_start = '1.3.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -23,9 +24,13 @@
 
     function choose(list, movie) {
         if (!list.length) return;
+        // «Продолжить» (ru-torrents) marks its open: play at once — the episode to watch, or the film's file played last
+        var play = movie && movie.lampa_tv_play;
         // the card says film or series; file names lie («1. Мадагаскар [HD1080].mkv» parses as episode 1)
         var serial = movie ? !!(movie.name || movie.number_of_seasons) : list.some(function (r) { return r.element.episode; });
         if (!serial) {
+            var last = play && play.file !== undefined ? list.filter(function (r) { return r.element.id === play.file; })[0] : null;
+            if (last) return last.item.trigger('hover:enter');
             var total = 0, main = list[0];
             list.forEach(function (r) { total += r.element.length || 0; if ((r.element.length || 0) > (main.element.length || 0)) main = r; });
             if (list.length === 1 || (main.element.length || 0) >= total * 0.85) main.item.trigger('hover:enter');
@@ -40,6 +45,7 @@
         if (!target && lastWatched >= 0 && lastWatched + 1 < list.length) target = list[lastWatched + 1];
         if (!target && lastWatched < 0) target = list[0]; // nothing watched yet: the first episode, not the season folder row
         if (target && Lampa.Modal && Lampa.Modal.scroll) Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
+        if (target && play) target.item.trigger('hover:enter');
     }
 
     Lampa.Listener.follow('torrent_file', function (e) {

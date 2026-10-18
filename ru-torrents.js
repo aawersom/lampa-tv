@@ -14,14 +14,14 @@
  * 5) The release last opened for that card is added to TorrServer while the card is open, so pressing it shows its
  *    files at once (see warmUp).
  * 6) The filter menu is worked out here and handed to Lampa in a few stand-in releases — no freeze on a long list (see filterMenu).
- * 7) «Продолжить» on the card of a film/series opened before: the file list of the release used last, in one press.
+ * 7) «Продолжить» on the card of a film/series opened before: plays the release used last at once (quick-start picks the file).
  * Patched: Parser.get callback (merge + rank) and the torrents component's sortWithViewed, which Lampa
  * calls after every sort (components/torrents.js sortResults). Already-opened releases stay pinned on top.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.11.0';
+    window.lampa_tv_ru_torrents = '1.12.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -191,20 +191,27 @@
     // 7) «Продолжить». The release whose files were opened last for a card — by any path: a release pressed in
     //    «Торренты», «Мои торренты», this button — is remembered (torrent hash per card, the last 300 cards). A card with a
     //    release of its own in TorrServer (data.movie; kept across restarts with «Сохранять в базу») gets «Продолжить» next
-    //    to «Смотреть»: the file list of the remembered release (else the newest one in TorrServer), the way «Мои торренты»
-    //    opens it; quick-start then starts a film or puts the focus on the episode to watch.
+    //    to «Смотреть»: the remembered release (else the newest one in TorrServer) opened the way «Мои торренты» opens it, and
+    //    marked to play at once: quick-start starts the episode to watch, or the film's file played last (also remembered).
     var LAST_KEY = 'lampa_tv_last_release', LAST_MAX = 300;
     var CONTINUE_ICON = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M4 4.5v15L15 12z" fill="currentColor"/><rect x="16.5" y="4.5" width="3.5" height="15" rx="1" fill="currentColor"/></svg>';
 
     function cardKey(card) { return (card.name ? 'tv:' : 'movie:') + card.id; }
 
-    function lastOpened(card) { return (Lampa.Storage.get(LAST_KEY, '{}') || {})[cardKey(card)] || ''; }
+    // { hash, file }: the release and the file of it played last (1.11.0 kept the bare hash)
+    function lastRecord(card) {
+        var r = (Lampa.Storage.get(LAST_KEY, '{}') || {})[cardKey(card)];
+        return typeof r === 'string' ? { hash: r } : r || {};
+    }
 
-    function rememberOpened(card, hash) {
-        var all = Lampa.Storage.get(LAST_KEY, '{}') || {}, key = cardKey(card);
-        if (all[key] === hash && Object.keys(all).pop() === key) return;
+    function lastOpened(card) { return lastRecord(card).hash || ''; }
+
+    function rememberOpened(card, hash, file) {
+        var all = Lampa.Storage.get(LAST_KEY, '{}') || {}, key = cardKey(card), was = lastRecord(card);
+        if (file === undefined && was.hash === hash) file = was.file; // the list shown again: the played file stays
+        if (was.hash === hash && was.file === file && Object.keys(all).pop() === key) return;
         delete all[key];
-        all[key] = hash; // keys keep insertion order: the oldest go first when the list is full
+        all[key] = { hash: hash, file: file }; // keys keep insertion order: the oldest go first when the list is full
         var keys = Object.keys(all);
         keys.slice(0, Math.max(0, keys.length - LAST_MAX)).forEach(function (k) { delete all[k]; });
         Lampa.Storage.set(LAST_KEY, all);
@@ -236,7 +243,12 @@
             var play = render.find('.button--play');
             if (!play.length || render.find('.button--continue').length) return;
             var btn = $('<div class="full-start__button selector button--continue">' + CONTINUE_ICON + '<span>Продолжить</span></div>');
-            btn.on('hover:enter', function () { Lampa.Torrent.open(hash, card); });
+            btn.on('hover:enter', function () {
+                // the mark travels with this very open (Lampa hands this object to the file list) and never gets saved
+                var movie = Object.assign({}, card), last = lastRecord(card);
+                Object.defineProperty(movie, 'lampa_tv_play', { value: { file: last.hash === String(hash).toLowerCase() ? last.file : undefined } });
+                Lampa.Torrent.open(hash, movie);
+            });
             play.after(btn);
             // the card's buttons are collected when it gets the focus; this one comes later
             if (Lampa.Controller.enabled().name === 'full_start') Lampa.Controller.collectionAppend(btn);
@@ -357,15 +369,16 @@
         });
         if (Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.follow('start', stopWarm);
 
-        // a file list is shown → remember its release for the card (render comes once per file, one write per list)
+        // a file list is shown → remember its release for the card (render comes once per file, one write per list);
+        // a file is played → remember the file too
         var shown = '';
         Lampa.Listener.follow('torrent_file', function (e) {
             if (e.type === 'list_open') shown = '';
-            if (e.type !== 'render' || !e.element || !e.element.torrent_hash) return;
+            if ((e.type !== 'render' && e.type !== 'onenter') || !e.element || !e.element.torrent_hash) return;
             var movie = (e.params && e.params.movie) || e.element.card, hash = String(e.element.torrent_hash).toLowerCase();
-            if (!movie || !movie.id || shown === hash) return;
+            if (!movie || !movie.id || (e.type === 'render' && shown === hash)) return;
             shown = hash;
-            try { rememberOpened(movie, hash); } catch (err) { console.log('RuTorrents', 'remember error', err && err.message); }
+            try { rememberOpened(movie, hash, e.type === 'onenter' ? e.element.id : undefined); } catch (err) { console.log('RuTorrents', 'remember error', err && err.message); }
         });
         Lampa.Listener.follow('full', addContinue);
         wrapped.__ruTorrents = true;
