@@ -8,11 +8,12 @@
  *    preload size. Done by trimming `preload_size` in TorrServer's `&stat` answers that Lampa polls (torrent.js preload).
  * 3) A list opened by «Продолжить» (ru-torrents, marked lampa_tv_play) plays at once: the episode chosen as in 1), or the film
  *    file played last; nothing to choose (all watched, several equal files never played) → the list stays.
+ * 4) Lampa's video screensaver releases the hardware video decoder when it closes (it kept it, see below).
  */
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.3.2';
+    window.lampa_tv_quick_start = '1.4.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -98,6 +99,21 @@
                 } catch (err) { /* not JSON — leave as is */ }
                 return data;
             };
+        });
+    }
+
+    // ---- 4) the screensaver lets the video decoder go ----
+    // Lampa's Aerial screensaver removes its <video> from the page while it plays (screensaver destroy → html.remove()):
+    // the hardware decoder (OMX.MTK.VIDEO.DECODER.AVC) and its memory stayed taken by Lampa for good (TV, 2026-10-19). MX
+    // then got only a second decoder instance (HEVC.kick) that failed on the next file → software decoding, jerky picture;
+    // and Lampa, bigger by ~70 MB, was the first app Android dropped during playback → Lampa restarted after the video.
+    // On «stop» the video is still on the page: stopped and emptied there, the decoder is released at once.
+    if (Lampa.Screensaver && Lampa.Screensaver.listener) {
+        Lampa.Screensaver.listener.follow('stop', function () {
+            var root = Lampa.Screensaver.html && Lampa.Screensaver.html[0];
+            [].forEach.call(root ? root.querySelectorAll('video') : [], function (v) {
+                try { v.pause(); v.removeAttribute('src'); v.load(); } catch (err) { /* already gone */ }
+            });
         });
     }
 
