@@ -15,7 +15,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.6.0';
+    window.lampa_tv_quick_start = '1.6.1';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -55,16 +55,25 @@
             if (!target && lastWatched >= 0 && lastWatched + 1 < list.length) target = list[lastWatched + 1];
             if (!target && lastWatched < 0) target = list[0]; // nothing watched yet: the first episode, not the season folder row
         }
-        // «Продолжить» after a session Lampa never heard back from: MX was left by switching the TV off, «Домой» or the
-        // screensaver, not «Назад» — no mark is newer than the start of the file played last (play.at). The episode is the
-        // one started then, or a later one MX went on to (TorrServer streamed it since: play.opened). Its old Lampa mark is
-        // cleared so MX resumes from its own memory of the exact place.
-        if (play && play.at && !(last && last.element.timeline.updated >= play.at)) {
-            var started = list.filter(function (r) { return r.element.id === play.file; })[0];
-            if (started) {
-                var opened = play.opened || [], from = list.indexOf(started);
+        // «Продолжить» knows the file started last from Lampa and when (play.file/at) and the files TorrServer streamed since
+        // (play.opened) — the episodes really played in that session. Only their marks count: returning from MX the Lampa
+        // app may mark other playlist episodes «100 %» that never played (TV, 2026-10-23: S2E6 marked while S2E2 played).
+        //  · a played episode has a mark newer than the start (MX left with «Назад»): the newest one, unfinished → it,
+        //    finished → the next one;
+        //  · no such mark (TV off, «Домой», screensaver — Lampa never heard back): the started episode, or a later one MX went
+        //    on to; its old Lampa mark is cleared so MX resumes from its own memory of the exact place.
+        var started = play && play.at ? list.filter(function (r) { return r.element.id === play.file; })[0] : null;
+        if (started) {
+            var opened = play.opened || [], from = list.indexOf(started), fresh = null;
+            var played = list.filter(function (r) { return r === started || opened.indexOf(r.element.id) >= 0; });
+            played.forEach(function (r) {
+                var t = r.element.timeline;
+                if (percent(r.element) > 0 && t && t.updated >= play.at && (!fresh || t.updated >= fresh.element.timeline.updated)) fresh = r;
+            });
+            if (fresh) target = percent(fresh.element) < 90 ? fresh : list[list.indexOf(fresh) + 1] || null;
+            else {
                 target = started;
-                list.forEach(function (r, i) { if (i > from && opened.indexOf(r.element.id) >= 0) target = r; });
+                played.forEach(function (r) { if (list.indexOf(r) > from) target = r; });
                 var tl = target.element.timeline;
                 if (tl && tl.time && Lampa.Timeline && Lampa.Timeline.update) {
                     Lampa.Timeline.update({ hash: tl.hash, percent: tl.percent, time: 0, duration: tl.duration, profile: tl.profile });

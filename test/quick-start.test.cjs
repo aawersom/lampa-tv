@@ -34,6 +34,10 @@ check('E7 half-watched, then E2 started, TV switched off (no new mark) → E2', 
 check('E2 started, MX went on to E3, E4, TV off → E4', many(), cont('E2', 500, ['E2', 'E3', 'E4']), 'E4', 'E4');
 check('started E2, TorrServer streamed E5 since (MX skipped ahead) → E5', many(), cont('E2', 500, ['E5', 'E2']), 'E5', 'E5');
 check('left with «Назад» on E7 after starting it → Lampa mark wins', many(), cont('E7', 200, ['E7']), 'E7', 'E7');
+// TV 2026-10-23: back from S2E2 (started by «Продолжить») the app also marked the never-played S2E6 «100 %»
+check('phantom 100 % on an episode not played this session is ignored', [ep('E1', 100, 100), ep('E2', 3, 610), ep('E6', 100, 610), ep('E7', 0, 0)], cont('E2', 500, ['E2']), 'E2', 'E2');
+check('played E2 to the end, MX went on to E3 (both streamed), «Назад» on E3 → E3', [ep('E2', 100, 610), ep('E3', 20, 610), ep('E4', 0, 0)], cont('E2', 500, ['E2', 'E3']), 'E3', 'E3');
+check('played E2 to the end, «Назад» right at its end → E3', [ep('E2', 98, 610), ep('E3', 0, 0)], cont('E2', 500, ['E2']), 'E3', 'E3');
 check('no start record (old version) → Lampa marks', many(), Object.defineProperty(Object.assign({}, series), 'lampa_tv_play', { value: {} }), 'E7', 'E7');
 check('watched last E04 finished → E05', [ep('E01', 4, 100), ep('E04', 95, 300), ep('E05', 0, 0)], series, 'E05', null);
 check('last episode finished → nothing to play', [ep('E01', 100, 100), ep('E02', 100, 200)], Object.defineProperty(Object.assign({}, series), 'lampa_tv_play', { value: {} }), null, null);
