@@ -21,7 +21,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.12.0';
+    window.lampa_tv_ru_torrents = '1.13.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -244,10 +244,22 @@
             if (!play.length || render.find('.button--continue').length) return;
             var btn = $('<div class="full-start__button selector button--continue">' + CONTINUE_ICON + '<span>Продолжить</span></div>');
             btn.on('hover:enter', function () {
-                // the mark travels with this very open (Lampa hands this object to the file list) and never gets saved
-                var movie = Object.assign({}, card), last = lastRecord(card);
-                Object.defineProperty(movie, 'lampa_tv_play', { value: { file: last.hash === String(hash).toLowerCase() ? last.file : undefined } });
-                Lampa.Torrent.open(hash, movie);
+                // the mark travels with this very open (Lampa hands this object to the file list) and never gets saved;
+                // `opened` = files TorrServer streamed for this release: Lampa learns a position only when MX is left with
+                // «Назад» — a session ended by switching the TV off / «Домой» / the screensaver leaves no marks (owner
+                // 2026-10-23: marks stopped at S2E4, TorrServer had streamed up to S2E6), the episode can come from here
+                var movie = Object.assign({}, card), last = lastRecord(card), sent = false;
+                var go = function (opened) {
+                    if (sent) return;
+                    sent = true;
+                    Object.defineProperty(movie, 'lampa_tv_play', { value: { file: last.hash === String(hash).toLowerCase() ? last.file : undefined, opened: opened || [] } });
+                    Lampa.Torrent.open(hash, movie);
+                };
+                var net = new Lampa.Reguest();
+                net.timeout(3000);
+                net.silent(Lampa.Torserver.url().replace(/\/$/, '') + '/viewed', function (list) {
+                    go((Array.isArray(list) ? list : []).map(function (v) { return v.file_index; }));
+                }, function () { go([]); }, JSON.stringify({ action: 'list', hash: hash }));
             });
             play.after(btn);
             // the card's buttons are collected when it gets the focus; this one comes later

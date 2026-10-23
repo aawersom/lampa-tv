@@ -13,7 +13,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.4.0';
+    window.lampa_tv_quick_start = '1.5.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -52,6 +52,14 @@
             // marks without a time (older ones): the first unfinished, else the one after the last finished
             if (!target && lastWatched >= 0 && lastWatched + 1 < list.length) target = list[lastWatched + 1];
             if (!target && lastWatched < 0) target = list[0]; // nothing watched yet: the first episode, not the season folder row
+        }
+        // «Продолжить»: the furthest file TorrServer streamed, when it is beyond Lampa's choice — Lampa got no marks for a
+        // session that ended without «Назад» in MX (TV off, «Домой», screensaver). Unfinished per Lampa → it (MX resumes
+        // it from its own memory), finished → the next one.
+        var opened = (play && play.opened) || [], furthest = null;
+        list.forEach(function (r) { if (opened.indexOf(r.element.id) >= 0) furthest = r; });
+        if (furthest && list.indexOf(furthest) > (target ? list.indexOf(target) : list.length)) {
+            target = percent(furthest.element) < 90 ? furthest : list[list.indexOf(furthest) + 1] || null;
         }
         if (target && Lampa.Modal && Lampa.Modal.scroll) Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
         if (target && play) target.item.trigger('hover:enter');
