@@ -21,7 +21,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.14.0';
+    window.lampa_tv_ru_torrents = '1.15.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -269,6 +269,39 @@
         });
     }
 
+    // 8) Card buttons (owner, 2026-10-23). «Смотреть» opens «Торренты» at once instead of Lampa's «Источник» menu; the
+    //    online sources keep a button of their own («Онлайн», next to «Смотреть»/«Продолжить»), since Lampa keeps the
+    //    source buttons in a hidden container reachable only through that menu. The «Подписаться» bell goes: it is
+    //    CUB Premium («Нет подписки» from cub) and only looked usable; new episodes come from «Непросмотренные серии».
+    function cardButtons(e) {
+        if (e.type !== 'complite' || !e.object || !e.object.activity) return;
+        var render = e.object.activity.render();
+        render.find('.button--subscribe').remove();
+        var tries = 0;
+        (function online() { // online_mod adds its button after the card is built
+            var src = render.find('.buttons--container .view--online_mod').first();
+            if (!src.length) { if (++tries < 15) setTimeout(online, 400); return; }
+            if (render.find('.button--online-copy').length) return;
+            var btn = $('<div class="full-start__button selector button--online-copy"></div>');
+            btn.append(src.find('svg').first().clone()).append($('<span></span>').text(src.text().trim() || 'Онлайн'));
+            btn.on('hover:enter', function () { src.trigger('hover:enter'); });
+            var after = render.find('.button--continue');
+            (after.length ? after : render.find('.button--play')).after(btn);
+            if (Lampa.Controller.enabled().name === 'full_start') Lampa.Controller.collectionAppend(btn);
+        })();
+    }
+
+    var showSelect = Lampa.Select.show;
+    Lampa.Select.show = function (params) {
+        try {
+            var torrents = params && params.title === Lampa.Lang.translate('settings_rest_source') && (params.items || []).filter(function (it) {
+                return it.btn && it.btn.hasClass && it.btn.hasClass('view--torrent');
+            })[0];
+            if (torrents) return torrents.btn.trigger('hover:enter');
+        } catch (err) { console.log('RuTorrents', 'play menu', err && err.message); }
+        return showSelect.apply(this, arguments);
+    };
+
     // 6) Filter menu without the freeze. Lampa builds it (components/torrents.js buildFilterd) by checking every release
     //    against each of its 911 voice names: Game of Thrones, 880 releases → 997 ms of frozen screen on the TV
     //    (2026-10-18), every time «Торренты» opens. The menu is only the union of voices / trackers / seasons in order of
@@ -402,6 +435,7 @@
             }
         });
         Lampa.Listener.follow('full', addContinue);
+        Lampa.Listener.follow('full', cardButtons);
         wrapped.__ruTorrents = true;
         Lampa.Parser.get = wrapped;
 

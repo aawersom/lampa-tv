@@ -18,7 +18,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_catalog_next) return;
-    window.lampa_tv_catalog_next = '1.3.1';
+    window.lampa_tv_catalog_next = '1.4.0';
 
     var AHEAD_ROWS = 6, PAGES = 2;
 
@@ -102,6 +102,43 @@
             if (++tries < 100 && !(comp && comp.destroyed)) setTimeout(wait, 200);
         })();
     });
+
+    // Main page: the viewer's own «Продолжить просмотр» comes first (owner, 2026-10-23). Lampa registers it at index 1, and
+    // every row registered after it (CUB, plugins) is inserted in front, so it ended up 7th, behind «Сейчас смотрят»,
+    // «Недавние выходы», Shots, «Ближайшие выходы», «Рекомендуем». Here the same list (Favorite.continues — history minus
+    // finished and dropped) is a row of its own moved to the top, and Lampa's copy is dropped. Lampa's copy also mixes in
+    // titles with a new voiced episode from CUB notices — a CUB Premium feature this account does not have.
+    var titleContinue = function () { return Lampa.Lang.translate('title_continue'); };
+    if (Lampa.ContentRows && Lampa.ContentRows.add && Lampa.Favorite && Lampa.Favorite.continues) {
+        Lampa.ContentRows.add({
+            name: 'lampa_tv_continue_first', title: titleContinue(), index: 0, screen: ['main'],
+            call: function () {
+                var results = Lampa.Favorite.continues('tv');
+                if (!results.length) return;
+                var row = function (call) { call({ results: results, title: titleContinue(), lampa_tv_first: true }); };
+                row.lampa_tv_first = true;
+                return row;
+            }
+        });
+        var callRows = Lampa.ContentRows.call;
+        Lampa.ContentRows.call = function (screen, params, calls) {
+            var res = callRows.apply(this, arguments);
+            if (screen !== 'main' || !Array.isArray(calls)) return res;
+            var mine = calls.filter(function (f) { return typeof f === 'function' && f.lampa_tv_first; })[0];
+            if (!mine) return res;
+            calls.forEach(function (f, i) {
+                if (typeof f !== 'function' || f === mine) return;
+                calls[i] = function (call) {
+                    return f.call(this, function (json) {
+                        call(json && json.title === titleContinue() && !json.lampa_tv_first ? { results: [] } : json);
+                    });
+                };
+            });
+            calls.splice(calls.indexOf(mine), 1);
+            calls.unshift(mine);
+            return res;
+        };
+    }
 
     Lampa.Keypad.listener.follow('down', function () {
         if (Lampa.Controller.enabled().name !== 'content') return;
