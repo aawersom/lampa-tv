@@ -20,7 +20,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_poster_heal) return;
-    window.lampa_tv_poster_heal = '1.3.0';
+    window.lampa_tv_poster_heal = '1.3.1';
 
     // ---- 1) hosts ----
     function hosts() {
@@ -32,19 +32,22 @@
     var current = 0;
     var errors = [];
 
-    // The fastest host of THIS network: every host loads the same small poster at once, the first full load wins.
-    // A fixed order was wrong as soon as the TV changed networks — 2026-10-23, TV on a direct Moscow line (Altagen):
-    // lampa.byskaz.ru/tmdb/img hung without an error (12 s+), every card waited its 15-s timer, while imagetmdb.com
-    // answered in 106 ms and nl.imagetmdb.com in 201 ms. A hung host never wins; a 16-KB cut never finishes loading.
-    // Run at start, when the network comes back, after the screensaver/player, and when the current host keeps failing.
-    var PROBE = 't/p/w92/1sIAsLSaMwm3mb7Y6jISMv56McR.jpg', probing = false, probedAt = 0;
+    // The fastest host of THIS network: the hosts outside Cloudflare/OVH load the same full-size poster at once, the
+    // first complete load wins. A fixed order was wrong as soon as the TV changed networks — 2026-10-23, TV on a direct
+    // Moscow line (Altagen): lampa.byskaz.ru/tmdb/img hung for a while without an error, every card waited its 15-s timer.
+    // imagetmdb.com (Cloudflare) and pl.imagetmdb.com (OVH) are left out of the race: Russian ISPs cut such answers at
+    // ~16 KB, so a small probe passed and won while the 30–50 KB posters hung (main page 1 of 7). They stay as fallbacks.
+    // Run at start, when the network comes back, after a long absence, and when the current host keeps failing.
+    var PROBE = 't/p/w300/1sIAsLSaMwm3mb7Y6jISMv56McR.jpg', probing = false, probedAt = 0;
+    function racer(host) { return !/\/\/(imagetmdb\.com|pl\.imagetmdb\.com|image\.tmdb\.org)\//.test(host); }
     function probeHosts() {
         if (probing) return;
         probing = true;
         probedAt = Date.now();
-        var list = hosts(), won = false, left = list.length;
+        var list = hosts(), won = false, left = list.filter(racer).length;
         var end = function () { if (--left === 0 || won) probing = false; };
         list.forEach(function (host, i) {
+            if (!racer(host)) return;
             var im = new Image();
             var t = setTimeout(function () { im.src = ''; end(); }, 8000);
             im.onload = function () {
