@@ -18,7 +18,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_catalog_next) return;
-    window.lampa_tv_catalog_next = '1.4.0';
+    window.lampa_tv_catalog_next = '1.5.0';
 
     var AHEAD_ROWS = 6, PAGES = 2;
 
@@ -139,6 +139,48 @@
             return res;
         };
     }
+
+    // Search: a title that is exactly what was typed comes first (owner, 2026-10-23). CUB answers in rows «Фильмы»,
+    // «Сериалы», «Аниме» in its own order: «Игра престолов» showed two documentaries first and the series third, in the
+    // second row. Here, in the CUB and TMDB search sources, exact matches (Russian or original title, case/ё/punctuation
+    // ignored) go to the front of their row and a row holding one goes first; everything else keeps its order.
+    var norm = function (s) { return String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/[^0-9a-zа-я]+/g, ' ').trim(); };
+    var exact = function (item, q) {
+        return [item.title, item.name, item.original_title, item.original_name].some(function (t) { return t && norm(t) === q; });
+    };
+    function rankSearch(rows, query) {
+        var q = norm(query);
+        if (!q || !Array.isArray(rows)) return rows;
+        rows.forEach(function (row) {
+            if (!row || !Array.isArray(row.results)) return;
+            var hit = row.results.filter(function (x) { return exact(x, q); });
+            if (hit.length) row.results = hit.concat(row.results.filter(function (x) { return hit.indexOf(x) < 0; }));
+            row.__exact = !!hit.length;
+        });
+        var first = rows.filter(function (r) { return r && r.__exact; });
+        return first.concat(rows.filter(function (r) { return first.indexOf(r) < 0; }));
+    }
+    ['cub', 'tmdb'].forEach(function (name) {
+        var src = Lampa.Api && Lampa.Api.sources && Lampa.Api.sources[name];
+        if (!src || typeof src.discovery !== 'function' || src.discovery.__ranked) return;
+        var discovery = src.discovery;
+        src.discovery = function () {
+            var d = discovery.apply(this, arguments);
+            if (d && typeof d.search === 'function') {
+                var search = d.search;
+                d.search = function (params, oncomplite) {
+                    var query = params && params.query;
+                    try { query = decodeURIComponent(query); } catch (e) { /* plain text */ }
+                    return search.call(this, params, function (rows) {
+                        try { rows = rankSearch(rows, query); } catch (e) { console.log('CatalogNext', 'search rank', e && e.message); }
+                        oncomplite(rows);
+                    });
+                };
+            }
+            return d;
+        };
+        src.discovery.__ranked = true;
+    });
 
     Lampa.Keypad.listener.follow('down', function () {
         if (Lampa.Controller.enabled().name !== 'content') return;
