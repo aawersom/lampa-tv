@@ -21,7 +21,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.13.0';
+    window.lampa_tv_ru_torrents = '1.14.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -206,12 +206,13 @@
 
     function lastOpened(card) { return lastRecord(card).hash || ''; }
 
+    // file + at: the file played last and when it was started (a list only shown keeps both)
     function rememberOpened(card, hash, file) {
-        var all = Lampa.Storage.get(LAST_KEY, '{}') || {}, key = cardKey(card), was = lastRecord(card);
-        if (file === undefined && was.hash === hash) file = was.file; // the list shown again: the played file stays
-        if (was.hash === hash && was.file === file && Object.keys(all).pop() === key) return;
+        var all = Lampa.Storage.get(LAST_KEY, '{}') || {}, key = cardKey(card), was = lastRecord(card), at = Date.now();
+        if (file === undefined && was.hash === hash) { file = was.file; at = was.at; } // the list shown again: the played file stays
+        if (was.hash === hash && was.file === file && was.at === at && Object.keys(all).pop() === key) return;
         delete all[key];
-        all[key] = { hash: hash, file: file }; // keys keep insertion order: the oldest go first when the list is full
+        all[key] = { hash: hash, file: file, at: at }; // keys keep insertion order: the oldest go first when the list is full
         var keys = Object.keys(all);
         keys.slice(0, Math.max(0, keys.length - LAST_MAX)).forEach(function (k) { delete all[k]; });
         Lampa.Storage.set(LAST_KEY, all);
@@ -245,14 +246,15 @@
             var btn = $('<div class="full-start__button selector button--continue">' + CONTINUE_ICON + '<span>Продолжить</span></div>');
             btn.on('hover:enter', function () {
                 // the mark travels with this very open (Lampa hands this object to the file list) and never gets saved;
-                // `opened` = files TorrServer streamed for this release: Lampa learns a position only when MX is left with
-                // «Назад» — a session ended by switching the TV off / «Домой» / the screensaver leaves no marks (owner
-                // 2026-10-23: marks stopped at S2E4, TorrServer had streamed up to S2E6), the episode can come from here
+                // file/at = the file started last from Lampa and when; `opened` = files TorrServer streamed since then.
+                // Lampa learns a position only when MX is left with «Назад» — a session ended by switching the TV off /
+                // «Домой» / the screensaver leaves no marks (owner 2026-10-23: marks stopped at S2E4, MX was on S2E6)
                 var movie = Object.assign({}, card), last = lastRecord(card), sent = false;
                 var go = function (opened) {
                     if (sent) return;
                     sent = true;
-                    Object.defineProperty(movie, 'lampa_tv_play', { value: { file: last.hash === String(hash).toLowerCase() ? last.file : undefined, opened: opened || [] } });
+                    var same = last.hash === String(hash).toLowerCase();
+                    Object.defineProperty(movie, 'lampa_tv_play', { value: { file: same ? last.file : undefined, at: same ? last.at : undefined, opened: opened || [] } });
                     Lampa.Torrent.open(hash, movie);
                 };
                 var net = new Lampa.Reguest();
@@ -391,6 +393,13 @@
             if (!movie || !movie.id || (e.type === 'render' && shown === hash)) return;
             shown = hash;
             try { rememberOpened(movie, hash, e.type === 'onenter' ? e.element.id : undefined); } catch (err) { console.log('RuTorrents', 'remember error', err && err.message); }
+            // a file is played: TorrServer's list of streamed files restarts here, so later it holds only this session —
+            // the file started now and those MX goes on to (its playlist moves forward)
+            if (e.type === 'onenter') {
+                var net = new Lampa.Reguest();
+                net.timeout(3000);
+                net.silent(Lampa.Torserver.url().replace(/\/$/, '') + '/viewed', function () {}, function () {}, JSON.stringify({ action: 'rem', hash: hash, file_index: -1 }), { dataType: 'text' });
+            }
         });
         Lampa.Listener.follow('full', addContinue);
         wrapped.__ruTorrents = true;

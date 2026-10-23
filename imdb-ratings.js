@@ -2,19 +2,19 @@
  * Lampa: IMDb rating everywhere — owner's TV tweak (Lampa 3.x). Owner: «в превью показывался рейтинг imdb основным,
  * tmdb мне там не нужен»; «imdb появляется на мгновение и тут же пропадает».
  * 1) Poster tiles. Lampa's card «Ratting» module writes TMDB vote_average into `.card__vote`. Here the tile shows the
- *    IMDb rating instead: from the card data (CUB lists carry imdb_rating), else from this plugin's cache, else one
- *    OMDb request by imdb_id (the owner's key, set for the ko3ik ratings plugin) — only for tiles that come on screen,
- *    two at a time, cached for 14 days. A tile without a known IMDb rating shows no number (no TMDB fallback).
+ *    IMDb rating instead: from the card data (CUB lists carry imdb_rating), else from this plugin's cache, else IMDb's
+ *    own API by imdb_id (a screen of tiles in one request; OMDb with the owner's key only if IMDb does not answer) —
+ *    only for tiles that come on screen, cached for 14 days. A tile without a known IMDb rating shows no number (no TMDB fallback).
  *    The badge colour follows the rating: 8+ green, 7–7.9 light green, 6–6.9 IMDb yellow, 5–5.9 orange, below red.
  * 2) Movie card. Lampa shows the IMDb rating it got from CUB; then the ratings plugin (ko3ik) asks OMDb and, when it
  *    gets nothing (no imdb_id because TMDB is blocked, OMDb error), hides `.rate--imdb` — the rating flashes and
- *    vanishes. Here a hidden IMDb badge is put back with the known value. The TMDB badge is not shown (owner, 2026-10-18:
+ *    vanishes. Here a hidden IMDb badge is put back with the known value, asked from IMDb when the card has none. The TMDB badge is not shown (owner, 2026-10-18:
  *    «TMDB внутри у карточек убери рейтинг»).
  */
 (function () {
     'use strict';
     if (window.lampa_tv_imdb_ratings) return;
-    window.lampa_tv_imdb_ratings = '1.2.0';
+    window.lampa_tv_imdb_ratings = '1.3.0';
 
     var CACHE_KEY = 'lampa_tv_imdb_cache';
     var TTL = 14 * 24 * 3600 * 1000;
@@ -42,37 +42,60 @@
         return c && c !== '-' ? c : null;
     }
 
-    // ---- OMDb queue ----
-    var queue = [], running = 0, asked = {};
+    // ---- IMDb ratings: IMDb's own API, many titles per request; OMDb only if IMDb does not answer ----
+    // OMDb sits behind Cloudflare: on the TV's direct Moscow line (2026-10-23) a request hung 30 s and the badge stayed
+    // empty «через раз». caching.graphql.imdb.com answered every time (~0.6 s) and takes a whole screen of titles at once.
+    var IMDB = 'https://caching.graphql.imdb.com/';
+    var IMDB_HEADERS = { 'Content-Type': 'application/json', 'x-imdb-client-name': 'imdb-web-next-localized' };
+    var queue = [], asked = {}, flushTimer = null, running = 0;
     function omdb(tt, done) {
         var key = Lampa.Storage.get('ratings_omdb_key', '');
-        if (!key) return done(null);
+        if (!key) return done(undefined);
         var net = new Lampa.Reguest();
         net.timeout(10000);
         net.silent('https://www.omdbapi.com/?apikey=' + encodeURIComponent(key) + '&i=' + encodeURIComponent(tt), function (j) {
-            var r = j && j.imdbRating && j.imdbRating !== 'N/A' ? parseFloat(j.imdbRating).toFixed(1) : null;
-            done(r);
+            done(j && j.imdbRating && j.imdbRating !== 'N/A' ? parseFloat(j.imdbRating).toFixed(1) : null);
         }, function () { done(undefined); });
     }
-    function pump() {
-        while (running < 2 && queue.length) {
-            var job = queue.shift();
-            running++;
-            (function (job) {
-                omdb(job.tt, function (r) {
-                    running--;
-                    if (r !== undefined) remember(job.tt, r || '-'); // '-' = OMDb has no rating; do not ask again for 14 days
-                    job.cbs.forEach(function (cb) { cb(r || null); });
-                    pump();
+    function imdbBatch(ids, done) { // → { tt: '8.2' | null } or null when IMDb did not answer
+        var net = new Lampa.Reguest();
+        net.timeout(10000);
+        // IMDb answers only its own site in a browser (CORS); Lampa's native request has no such limit
+        net['native'](IMDB, function (json) {
+            try {
+                if (typeof json === 'string') json = JSON.parse(json);
+                var out = {};
+                json.data.titles.forEach(function (t) {
+                    var r = t && t.ratingsSummary && t.ratingsSummary.aggregateRating;
+                    if (t) out[t.id] = r ? Number(r).toFixed(1) : null;
                 });
-            })(job);
-        }
+                done(out);
+            } catch (e) { done(null); }
+        }, function () { done(null); }, JSON.stringify({ query: '{ titles(ids: ' + JSON.stringify(ids) + ') { id ratingsSummary { aggregateRating } } }' }),
+        { headers: IMDB_HEADERS, dataType: 'json' });
+    }
+    function settle(job, r) {
+        delete asked[job.tt]; // a later ask goes to the cache, or asks again after a failure
+        if (r !== undefined) remember(job.tt, r || '-'); // '-' = IMDb has no rating; do not ask again for 14 days
+        job.cbs.forEach(function (cb) { cb(r || null); });
+    }
+    function flush() {
+        flushTimer = null;
+        if (!queue.length || running >= 2) return;
+        var jobs = queue.splice(0, 25);
+        running++;
+        imdbBatch(jobs.map(function (j) { return j.tt; }), function (res) {
+            running--;
+            if (res) jobs.forEach(function (j) { settle(j, j.tt in res ? res[j.tt] : undefined); });
+            else jobs.forEach(function (j) { omdb(j.tt, function (r) { settle(j, r); }); });
+            if (queue.length) flush();
+        });
     }
     function ask(tt, cb) {
         if (asked[tt]) return asked[tt].cbs.push(cb);
         var job = asked[tt] = { tt: tt, cbs: [cb] };
         queue.push(job);
-        pump();
+        if (!flushTimer) flushTimer = setTimeout(flush, 150); // a screen of tiles comes in one burst → one request
     }
 
     // ---- 1) tiles ----
@@ -178,9 +201,12 @@
             var divs = box.children;
             if (divs[0]) divs[0].textContent = value;
         };
-        [1500, 3000, 6000].forEach(function (ms) { setTimeout(guard, ms); });
+        [1500, 3000, 6000, 12000].forEach(function (ms) { setTimeout(guard, ms); });
         var tt = movie.imdb_id || (movie.external_ids && movie.external_ids.imdb_id);
         if (tt && parseFloat(movie.imdb_rating) > 0) remember(tt, parseFloat(movie.imdb_rating).toFixed(1));
+        // a card opened from TMDB (search, filter, «Похожие») carries no IMDb rating and the ratings plugin's OMDb may
+        // not answer: the rating is asked from IMDb here, the guard above then shows it
+        else if (tt && !cached(tt)) ask(tt, function () { guard(); });
     });
 
     console.log('ImdbRatings', 'ready', window.lampa_tv_imdb_ratings);

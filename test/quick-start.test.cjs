@@ -25,13 +25,16 @@ check('watched last E05 unfinished → E05, not E01', owner, series, 'E05', null
 check('same with «Продолжить» → plays E05', owner, Object.defineProperty(Object.assign({}, series), 'lampa_tv_play', { value: {} }), 'E05', 'E05');
 // TV 2026-10-18 22:05: skipping E01→E03 in MX marked E01, E02 (100 %) and E03 (1 %) at the same moment
 check('same time on several marks → the later episode (E03)', [ep('E01', 100, 500), ep('E02', 100, 500), ep('E03', 1, 500), ep('E04', 4, 300)], series, 'E03', null);
-// TV 2026-10-23: marks stop at S1E8 60 % … S2E4 7 % (sessions ended without «Назад»), TorrServer streamed files up to S2E6
-const cont = (opened) => Object.defineProperty(Object.assign({}, series), 'lampa_tv_play', { value: { opened } });
-const tv = [ep('E1', 100, 100), ep('E2', 60, 200), ep('E3', 0, 0), ep('E4', 7, 300), ep('E5', 0, 0), ep('E6', 0, 0), ep('E7', 0, 0)];
-check('TorrServer streamed further (E6) than Lampa knows (E4) → plays E6', tv, cont(['E1', 'E2', 'E3', 'E4', 'E5', 'E6']), 'E6', 'E6');
-check('TorrServer not beyond Lampa → Lampa choice', tv, cont(['E1', 'E2', 'E4']), 'E4', 'E4');
-check('furthest streamed already finished → the next one', [ep('E1', 100, 100), ep('E2', 100, 200), ep('E3', 0, 0)], cont(['E1', 'E2']), 'E3', 'E3');
-check('no TorrServer list → Lampa choice', tv, cont([]), 'E4', 'E4');
+// «Продолжить» with the start of the file played last (at) and the files TorrServer streamed since (opened)
+const cont = (file, at, opened) => Object.defineProperty(Object.assign({}, series), 'lampa_tv_play', { value: { file, at, opened } });
+const many = () => [ep('E1', 100, 100), ep('E2', 0, 0), ep('E3', 0, 0), ep('E4', 0, 0), ep('E5', 0, 0), ep('E6', 0, 0), ep('E7', 40, 300), ep('E8', 0, 0)];
+// owner: «смотрел 7-ю, не досмотрел, потом начал 2-ю — открывалась вторая»
+check('E7 half-watched, then E2 started (left with «Назад», mark newer than start) → E2', [ep('E1', 100, 100), ep('E2', 20, 600), ep('E7', 40, 300)], cont('E2', 500, ['E2']), 'E2', 'E2');
+check('E7 half-watched, then E2 started, TV switched off (no new mark) → E2', many(), cont('E2', 500, ['E2']), 'E2', 'E2');
+check('E2 started, MX went on to E3, E4, TV off → E4', many(), cont('E2', 500, ['E2', 'E3', 'E4']), 'E4', 'E4');
+check('started E2, TorrServer streamed E5 since (MX skipped ahead) → E5', many(), cont('E2', 500, ['E5', 'E2']), 'E5', 'E5');
+check('left with «Назад» on E7 after starting it → Lampa mark wins', many(), cont('E7', 200, ['E7']), 'E7', 'E7');
+check('no start record (old version) → Lampa marks', many(), Object.defineProperty(Object.assign({}, series), 'lampa_tv_play', { value: {} }), 'E7', 'E7');
 check('watched last E04 finished → E05', [ep('E01', 4, 100), ep('E04', 95, 300), ep('E05', 0, 0)], series, 'E05', null);
 check('last episode finished → nothing to play', [ep('E01', 100, 100), ep('E02', 100, 200)], Object.defineProperty(Object.assign({}, series), 'lampa_tv_play', { value: {} }), null, null);
 check('nothing watched → first episode', [ep('E01', 0, 0), ep('E02', 0, 0)], series, 'E01', null);

@@ -7,13 +7,15 @@
  *    ends once ~10 seconds of THIS video are buffered (file size / runtime × 10 s); never more than TorrServer's own
  *    preload size. Done by trimming `preload_size` in TorrServer's `&stat` answers that Lampa polls (torrent.js preload).
  * 3) A list opened by «Продолжить» (ru-torrents, marked lampa_tv_play) plays at once: the episode chosen as in 1), or the film
- *    file played last; nothing to choose (all watched, several equal files never played) → the list stays.
+ *    file played last; nothing to choose (all watched, several equal files never played) → the list stays. A session that
+ *    ended without «Назад» in MX left Lampa no marks: then the episode started last (or the one MX went on to) plays,
+ *    from MX's own memory of the place.
  * 4) Lampa's video screensaver releases the hardware video decoder when it closes (it kept it, see below).
  */
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.5.0';
+    window.lampa_tv_quick_start = '1.6.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -53,13 +55,21 @@
             if (!target && lastWatched >= 0 && lastWatched + 1 < list.length) target = list[lastWatched + 1];
             if (!target && lastWatched < 0) target = list[0]; // nothing watched yet: the first episode, not the season folder row
         }
-        // «Продолжить»: the furthest file TorrServer streamed, when it is beyond Lampa's choice — Lampa got no marks for a
-        // session that ended without «Назад» in MX (TV off, «Домой», screensaver). Unfinished per Lampa → it (MX resumes
-        // it from its own memory), finished → the next one.
-        var opened = (play && play.opened) || [], furthest = null;
-        list.forEach(function (r) { if (opened.indexOf(r.element.id) >= 0) furthest = r; });
-        if (furthest && list.indexOf(furthest) > (target ? list.indexOf(target) : list.length)) {
-            target = percent(furthest.element) < 90 ? furthest : list[list.indexOf(furthest) + 1] || null;
+        // «Продолжить» after a session Lampa never heard back from: MX was left by switching the TV off, «Домой» or the
+        // screensaver, not «Назад» — no mark is newer than the start of the file played last (play.at). The episode is the
+        // one started then, or a later one MX went on to (TorrServer streamed it since: play.opened). Its old Lampa mark is
+        // cleared so MX resumes from its own memory of the exact place.
+        if (play && play.at && !(last && last.element.timeline.updated >= play.at)) {
+            var started = list.filter(function (r) { return r.element.id === play.file; })[0];
+            if (started) {
+                var opened = play.opened || [], from = list.indexOf(started);
+                target = started;
+                list.forEach(function (r, i) { if (i > from && opened.indexOf(r.element.id) >= 0) target = r; });
+                var tl = target.element.timeline;
+                if (tl && tl.time && Lampa.Timeline && Lampa.Timeline.update) {
+                    Lampa.Timeline.update({ hash: tl.hash, percent: tl.percent, time: 0, duration: tl.duration, profile: tl.profile });
+                }
+            }
         }
         if (target && Lampa.Modal && Lampa.Modal.scroll) Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
         if (target && play) target.item.trigger('hover:enter');
