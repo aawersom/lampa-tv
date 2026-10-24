@@ -20,7 +20,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_poster_heal) return;
-    window.lampa_tv_poster_heal = '1.3.2';
+    window.lampa_tv_poster_heal = '1.3.3';
 
     // ---- 1) hosts ----
     function hosts() {
@@ -31,6 +31,7 @@
     }
     var current = 0;
     var errors = [];
+    var healSoon;
 
     // The fastest host of THIS network: the hosts outside Cloudflare/OVH load the same full-size poster at once, the
     // first complete load wins. A fixed order was wrong as soon as the TV changed networks — 2026-10-23, TV on a direct
@@ -84,6 +85,8 @@
         Lampa.TMDB.image = image;
         var broken = Lampa.TMDB.broken;
         Lampa.TMDB.broken = function (url) {
+            clearTimeout(healSoon);
+            healSoon = setTimeout(heal, 3000); // a poster just failed: load it again from another host now, not in up to 30 s
             if (String(url || '').indexOf(hosts()[current]) === 0) {
                 var now = Date.now();
                 errors.push(now);

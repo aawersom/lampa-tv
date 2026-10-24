@@ -12,7 +12,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_imdb_filter) return;
-    window.lampa_tv_imdb_filter = '1.0.2';
+    window.lampa_tv_imdb_filter = '1.0.3';
 
     var SOURCE = 'imdb_filter';
     var PAGE = 20;
@@ -64,10 +64,11 @@
         var c = [];
         c.push('titleTypeConstraint: { anyTitleTypeIds: ' + JSON.stringify(f.type === 'tv' ? ['tvSeries', 'tvMiniSeries'] : ['movie']) + ' }');
         // enough votes: obscure titles go to the end of a popularity list anyway; best-rated and newest need a real crowd
-        // (fresh releases get 9–10 from a few thousand votes; IMDb's own Top 250 asks for 25 000).
+        // (fresh releases get 9–10 from a few thousand votes; IMDb's own Top 250 asks for 25 000). Newest: 1000 votes —
+        // 5000 left «фантастика 2025, новые» at 46 films, 1000 gives 87 (all genres of 2025: 489 → 1362), 2026-10-24.
         // Films in Russian, Ukrainian… get few IMDb votes, so the bar is lower when only such languages are asked for.
         var local = f.langs.length && f.langs.indexOf('en') < 0;
-        var votes = f.sort === 'top' ? (local ? 2000 : 25000) : f.sort === 'now' ? (local ? 300 : 5000) : (local ? 25 : 100);
+        var votes = f.sort === 'top' ? (local ? 2000 : 25000) : f.sort === 'now' ? (local ? 300 : 1000) : (local ? 25 : 100);
         var range = 'ratingsCountRange: { min: ' + votes + ' }';
         if (f.min || f.max) range = 'aggregateRatingRange: { ' + (f.min ? 'min: ' + f.min : '') + (f.min && f.max ? ', ' : '') + (f.max ? 'max: ' + f.max : '') + ' }, ' + range;
         c.push('userRatingsConstraint: { ' + range + ' }');

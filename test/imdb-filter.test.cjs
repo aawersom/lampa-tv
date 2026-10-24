@@ -30,7 +30,7 @@ check('?cat=anime&vote=7.5', ['anyTitleTypeIds: ["tvSeries","tvMiniSeries"]', 'a
   'ratingsCountRange: { min: 25 }']);
 check('?cat=movie&vote=7&language=ru&without_genres=16', ['anyPrimaryLanguages: ["ru"]', 'ratingsCountRange: { min: 25 }']);
 check('?cat=movie&sort=top&without_genres=16', ['ratingsCountRange: { min: 25000 }'], 'USER_RATING, sortOrder: DESC');
-check('?cat=movie&sort=now&without_genres=16', ['ratingsCountRange: { min: 5000 }', 'end: "'], 'RELEASE_DATE, sortOrder: DESC');
+check('?cat=movie&sort=now&without_genres=16', ['ratingsCountRange: { min: 1000 }', 'end: "'], 'RELEASE_DATE, sortOrder: DESC');
 check('discover/movie?vote_average.gte=8&primary_release_year=2023&without_genres=16&with_original_language=ru|uk',
   ['aggregateRatingRange: { min: 8 }', 'start: "2023-01-01"', 'anyPrimaryLanguages: ["ru","uk"]']);
 check('discover/tv?vote_average.gte=6&vote_average.lte=8&first_air_date.lte=2025-12-31&first_air_date.gte=2021-01-01&with_genres=18',
