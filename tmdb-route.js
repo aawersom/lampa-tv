@@ -16,7 +16,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_tmdb_route) return;
-    window.lampa_tv_tmdb_route = '1.2.0';
+    window.lampa_tv_tmdb_route = '1.2.1';
 
     var KEY = 'lampa_tv_tmdb_route';
     var TMDB_API = /^https?:\/\/(api\.themoviedb\.org\/3|apitmdb\.[^\/]+\/3|lampa\.byskaz\.ru\/tmdb\/api\/3|tmdb-api\.rootu\.top\/3|tmdbapi\.bylampa\.online\/3)\//;
@@ -71,27 +71,33 @@
     // ratings, release quality). From the TV line it answered 5 of 12 (500s, dropped connections; 2026-10-24) while every
     // TMDB mirror answered 12 of 12, and a failed request leaves the card empty. A failed one is asked once more, then the
     // card comes from TMDB (through the host picked here), without CUB's extras.
+    // A failed main request does not reach onerror: core full$1 counts it as done and completes with the side parts only
+    // (no `movie`); the card component then shows «empty». So a completion without `movie` is a failure too.
     var cub = Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.cub;
     if (cub && typeof cub.full === 'function' && !cub.full.__fallback) {
         var cubFull = cub.full;
         cub.full = function (params, oncomplite, onerror) {
             var self = this, tries = 0;
-            (function attempt() {
+            var fail = function () {
+                if (++tries < 2) return attempt();
+                var tmdb = Lampa.Api.sources.tmdb;
+                console.log('TmdbRoute', 'CUB card failed twice, from TMDB:', params && params.method, params && params.id);
+                if (tmdb && typeof tmdb.full === 'function') tmdb.full(Object.assign({}, params, { source: 'tmdb' }), oncomplite, onerror);
+                else onerror();
+            };
+            function attempt() {
                 var settled = false;
-                cubFull.call(self, params, function () {
+                cubFull.call(self, params, function (data) {
                     if (settled) return;
                     settled = true;
-                    oncomplite.apply(this, arguments);
+                    if (data && data.movie) oncomplite.apply(this, arguments); else fail();
                 }, function () {
                     if (settled) return;
                     settled = true;
-                    if (++tries < 2) return attempt();
-                    var tmdb = Lampa.Api.sources.tmdb;
-                    console.log('TmdbRoute', 'CUB card failed twice, from TMDB:', params && params.method, params && params.id);
-                    if (tmdb && typeof tmdb.full === 'function') tmdb.full(Object.assign({}, params, { source: 'tmdb' }), oncomplite, onerror);
-                    else onerror.apply(this, arguments);
+                    fail();
                 });
-            })();
+            }
+            attempt();
         };
         cub.full.__fallback = true;
     }

@@ -9,15 +9,17 @@ function load(cubAnswers) {
   const Lampa = {
     Storage: { get: () => '', set() {} }, Listener: { follow() {} }, TMDB: { key: () => 'k' },
     Api: { sources: {
-      cub: { full: (params, ok, err) => { const a = cubAnswers.shift(); calls.push('cub ' + a); a === 'ok' ? ok({ source: 'cub' }) : err(); } },
-      tmdb: { full: (params, ok) => { calls.push('tmdb ' + params.source); ok({ source: 'tmdb' }); } },
+      // core full$1: a failed main request still completes — with the side parts only, no `movie` (2026-10-24 review);
+      // onerror only for DMCA cards and a 200 answer carrying status_code
+      cub: { full: (params, ok, err) => { const a = cubAnswers.shift(); calls.push('cub ' + a); a === 'ok' ? ok({ movie: { source: 'cub' } }) : a === 'dmca' ? err() : ok({ persons: [] }); } },
+      tmdb: { full: (params, ok, err) => { calls.push('tmdb ' + params.source); cubAnswers[0] === 'dmca' ? err() : ok({ movie: { source: 'tmdb' } }); } },
     } },
   };
   const $ = { ajax() {} };
   const noop = { addEventListener() {} };
   new Function('window', 'Lampa', '$', 'document', 'location', 'console', src)(noop, Lampa, $, noop, { protocol: 'http:' }, { log() {} });
   let result = null, failed = false;
-  Lampa.Api.sources.cub.full({ method: 'movie', id: 550, source: 'cub' }, (j) => { result = j.source; }, () => { failed = true; });
+  Lampa.Api.sources.cub.full({ method: 'movie', id: 550, source: 'cub' }, (j) => { result = j.movie && j.movie.source; }, () => { failed = true; });
   return { calls, result, failed };
 }
 
@@ -33,4 +35,6 @@ r = load(['fail', 'ok']);
 check('CUB fails once → asked again, CUB card', [r.calls, r.result], [['cub fail', 'cub ok'], 'cub']);
 r = load(['fail', 'fail']);
 check('CUB fails twice → TMDB card', [r.calls, r.result, r.failed], [['cub fail', 'cub fail', 'tmdb tmdb'], 'tmdb', false]);
+r = load(['dmca', 'dmca', 'dmca']);
+check('DMCA card → onerror in the end, no loop', [r.calls.length, r.result, r.failed], [3, null, true]);
 process.exitCode = bad ? 1 : 0;

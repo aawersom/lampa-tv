@@ -5,7 +5,7 @@ const path = require('path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'imdb-ratings.js'), 'utf8');
 const body = src.slice(src.indexOf("    var CACHE_KEY"), src.indexOf('    var io = window.IntersectionObserver'));
 
-function setup(store, imdb) {
+function setup(store, imdb, omdbCalls) {
   const timers = [];
   const requests = [];
   const Lampa = {
@@ -16,6 +16,8 @@ function setup(store, imdb) {
     },
     TMDB: { api: (u) => u, key: () => 'k' },
   };
+  Lampa.Reguest.prototype.silent = function (url, ok) { if (omdbCalls) omdbCalls.push(url); ok({ imdbRating: '5.5' }); };
+  if (omdbCalls) store.ratings_omdb_key = 'key';
   const fakeTimeout = (fn) => { timers.push(fn); return timers.length; };
   const api = new Function('Lampa', 'setTimeout', 'clearTimeout', 'document', body + '\nfunction whenVisible(card, fn) { fn(); }\nreturn { tile: tile };')(Lampa, fakeTimeout, () => {}, {});
   const run = () => { while (timers.length) timers.shift()(); };
@@ -64,4 +66,41 @@ check('old film asked 5 days ago → not asked again', old.vote.textContent, '8.
 check('fresh film asked 2 days ago → asked again', recent.vote.textContent, '7.3');
 check('entry stored from CUB by 1.3 (no v:2) → asked', legacy.vote.textContent, '6.0');
 check('one request for the screen', t.requests.map((r) => r.join(',')), ['tt4,tt5']);
+// cache: entries older than 4 weeks go, at most 4000 stay (newest)
+store = { lampa_tv_imdb_cache: {} };
+for (let i = 0; i < 4100; i++) store.lampa_tv_imdb_cache['tt' + (1000 + i)] = { r: '7.0', t: Date.now() - i * 1000, v: 2 };
+store.lampa_tv_imdb_cache.ttold = { r: '7.0', t: Date.now() - 30 * day, v: 2 };
+t = setup(store, {});
+t.api.tile(card({ id: 9, imdb_id: 'tt1000', release_date: '2010-01-01' }));
+const kept = store.lampa_tv_imdb_cache;
+check('cache pruned to the newest 4000, month-old entry gone', [Object.keys(kept).length, 'tt1000' in kept, 'ttold' in kept, 'tt5099' in kept], [4000, true, false, false]);
+
+// IMDb silent: OMDb only for a tile showing nothing; tiles with CUB's value are not asked again for 5 min
+store = {};
+const omdbCalls = [];
+t = setup(store, null, omdbCalls);
+const withCub = card({ id: 10, imdb_id: 'tt10', imdb_rating: 7.1, release_date: ago(10) });
+const empty = card({ id: 11, imdb_id: 'tt11', release_date: ago(10) });
+[withCub, empty].forEach((x) => t.api.tile(x));
+t.run();
+check('OMDb asked only for the tile with no number', [omdbCalls.length, /tt11/.test(omdbCalls[0] || ''), withCub.vote.textContent, empty.vote.textContent], [1, true, '7.1', '5.5']);
+const later = card({ id: 12, imdb_id: 'tt12', imdb_rating: 6.0, release_date: ago(10) });
+t.api.tile(later);
+t.run();
+check('during the 5-min pause a tile with a value is not asked', [t.requests.length, omdbCalls.length, later.vote.textContent], [1, 1, '6.0']);
 process.exitCode = failed ? 1 : 0;
+
+// movie card: Lampa wrote CUB's 9.0 into a visible badge; IMDb's answer (7.6) replaces it
+{
+  const store2 = { lampa_tv_imdb_cache: { tt7: { r: '7.6', t: Date.now(), v: 2 } } };
+  const follows = [], timers2 = [];
+  const badge = { classList: { contains: () => false, remove() {} }, children: [{ textContent: '9.0' }] };
+  const doc = { body: { querySelectorAll: () => [] }, head: { appendChild() {} }, createElement: () => ({}), querySelector: () => badge };
+  const L = { Storage: { get: (k, d) => (k in store2 ? store2[k] : d === '' ? '' : JSON.parse(d)), set() {} }, Listener: { follow: (n, f) => follows.push(f) }, TMDB: {} };
+  new Function('window', 'Lampa', 'document', 'setTimeout', 'clearTimeout', 'MutationObserver', 'console', src)(
+    {}, L, doc, (fn) => timers2.push(fn), () => {}, function () { this.observe = () => {}; }, { log() {} });
+  follows[0]({ type: 'complite', data: { movie: { imdb_id: 'tt7', imdb_rating: 9.0, release_date: ago(5) } }, body: [doc] });
+  timers2.forEach((fn) => fn());
+  check('card badge: IMDb 7.6 replaces CUB 9.0 even when visible', badge.children[0].textContent, '7.6');
+  process.exitCode = failed ? 1 : 0;
+}

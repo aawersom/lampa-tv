@@ -18,7 +18,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_catalog_next) return;
-    window.lampa_tv_catalog_next = '1.6.0';
+    window.lampa_tv_catalog_next = '1.6.1';
 
     var AHEAD_ROWS = 6, PAGES = 2;
 
@@ -183,8 +183,10 @@
     });
 
     // «Огонь!»: CUB has 5 pages of it (100 titles, top/fire/movie|tv, 2026-10-24); owner: «мало выдачи в огонь». Once
-    // CUB's pages end, the list goes on with TMDB's popular well-rated titles of the last years (CUB's own already shown
-    // are skipped), so «Ещё» keeps loading.
+    // CUB's pages end, the list goes on with TMDB's popular well-rated titles of the last years, skipping CUB's own, so
+    // «Ещё» keeps loading. Only CUB's titles are skipped: a TMDB title met again (list opened a second time) must show
+    // again; repeats inside one list are dropped by dedupe(). Lampa fixes the list's page count on page 1, so it counts
+    // TMDB's pages once they are known (first opening: 45 at most).
     var FIRE_MORE = 45;
     var fireNext = {
         movie: function () { return 'discover/movie?sort_by=popularity.desc&vote_average.gte=7&vote_count.gte=300&primary_release_date.gte=' + (new Date().getFullYear() - 5) + '-01-01'; },
@@ -192,28 +194,30 @@
     };
     var cubSource = Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.cub;
     if (cubSource && typeof cubSource.list === 'function' && !cubSource.list.__fire) {
-        var cubList = cubSource.list, fireSeen = { movie: {}, tv: {} }, firePages = { movie: 5, tv: 5 };
+        var cubList = cubSource.list, cubSeen = { movie: {}, tv: {} }, cubPages = { movie: 5, tv: 5 }, tmdbPages = {};
+        var tail = function (type) { return Math.min(FIRE_MORE, tmdbPages[type] || FIRE_MORE); };
         cubSource.list = function (params, oncomplite, onerror) {
             var m = /^top\/fire\/(movie|tv)\b/.exec(params && params.url || '');
             if (!m) return cubList.apply(this, arguments);
-            var type = m[1], seen = fireSeen[type], page = parseInt(params.page, 10) || 1;
-            var mark = function (list) { (list || []).forEach(function (x) { seen[x.id] = 1; }); };
-            if (page <= firePages[type]) {
+            var type = m[1], page = parseInt(params.page, 10) || 1;
+            if (page <= cubPages[type]) {
                 return cubList.call(this, params, function (json) {
-                    if (json && json.total_pages) firePages[type] = json.total_pages;
-                    if (json) { mark(json.results); json.total_pages = firePages[type] + FIRE_MORE; }
+                    if (json && json.total_pages) cubPages[type] = json.total_pages;
+                    if (json) {
+                        (json.results || []).forEach(function (x) { cubSeen[type][x.id] = 1; });
+                        json.total_pages = cubPages[type] + tail(type);
+                    }
                     oncomplite(json);
                 }, onerror);
             }
             (function tmdbPage(p, tries) {
                 Lampa.Api.sources.tmdb.list({ url: fireNext[type](), page: p }, function (json) {
-                    var fresh = (json.results || []).filter(function (x) { return !seen[x.id]; });
-                    mark(fresh);
-                    var last = Math.min(FIRE_MORE, json.total_pages || 0);
-                    if (!fresh.length && p < last && tries < 3) return tmdbPage(p + 1, tries + 1);
-                    oncomplite(Object.assign({}, json, { results: fresh, page: page, total_pages: firePages[type] + last }));
+                    if (json.total_pages) tmdbPages[type] = json.total_pages;
+                    var fresh = (json.results || []).filter(function (x) { return !cubSeen[type][x.id]; });
+                    if (!fresh.length && p < tail(type) && tries < 3) return tmdbPage(p + 1, tries + 1);
+                    oncomplite(Object.assign({}, json, { results: fresh, page: page, total_pages: cubPages[type] + tail(type) }));
                 }, onerror);
-            })(page - firePages[type], 0);
+            })(page - cubPages[type], 0);
         };
         cubSource.list.__fire = true;
     }
@@ -221,44 +225,55 @@
     // «Рекомендуем посмотреть»: Lampa builds it from TMDB's recommendations for the titles in the history, one title every
     // 2 min, and keeps them in a cache of 100 (Storage.cache('recomends_list', 100)) for films and series together. The
     // owner's history is mostly series, so the main page (films only) had 28 (TV backup 2026-10-23). Here the cache keeps
-    // 600, and after start the history titles not asked for 2 weeks get their recommendations at once (one every 1.5 s).
+    // 600, every entry trimmed to what a tile needs (Lampa's own entries too: ~350 instead of ~900 chars, localStorage is
+    // ~2.8M of ~5M chars), and after start the history titles not asked for 2 weeks get their recommendations at once,
+    // oldest first so the newest history's survive the cut, one every 1.5 s.
     var RECS = 'recomends_list', RECS_MAX = 600, RECS_DONE = 'lampa_tv_recs_done';
-    var storageCache = Lampa.Storage.cache;
+    var KEEP = ['id', 'title', 'name', 'original_title', 'original_name', 'poster_path', 'backdrop_path', 'release_date', 'first_air_date',
+        'vote_average', 'vote_count', 'genre_ids', 'original_language', 'popularity', 'media_type', 'number_of_seasons', 'source'];
+    var slim = function (r) {
+        var x = {};
+        KEEP.forEach(function (k) { if (r && r[k] !== undefined) x[k] = r[k]; });
+        return x;
+    };
+    var storageCache = Lampa.Storage.cache, storageSet = Lampa.Storage.set;
     if (typeof storageCache === 'function' && !storageCache.__recs) {
         Lampa.Storage.cache = function (name, max) {
             if (name === RECS) arguments[1] = Math.max(max || 0, RECS_MAX);
             return storageCache.apply(this, arguments);
         };
         Lampa.Storage.cache.__recs = true;
+        Lampa.Storage.set = function (name, value) {
+            if (name === RECS && Array.isArray(value)) arguments[1] = value.slice(-RECS_MAX).map(slim);
+            return storageSet.apply(this, arguments);
+        };
     }
-    var KEEP = ['id', 'title', 'name', 'original_title', 'original_name', 'poster_path', 'backdrop_path', 'release_date', 'first_air_date',
-        'vote_average', 'vote_count', 'genre_ids', 'original_language', 'popularity', 'media_type'];
     function recsFill() {
         if (!Lampa.Favorite || !Lampa.Favorite.get || !Lampa.TMDB || !Lampa.TMDB.api) return;
-        var history = Lampa.Favorite.get({ type: 'history' }) || [];
-        var done = Lampa.Storage.get(RECS_DONE, '{}'), now = Date.now(), minYear = new Date().getFullYear() - 20;
-        var todo = history.filter(function (h) { return ['cub', 'tmdb'].indexOf(h.source) >= 0 && !(done[h.id] > now - 14 * 864e5); });
-        var inHistory = {};
+        var history = Lampa.Favorite.get({ type: 'history' }) || []; // newest first
+        var list = Lampa.Storage.cache(RECS, RECS_MAX, []);
+        // a start without this plugin cuts the list back to Lampa's 100: then ask the whole history again
+        var done = list.length < 200 ? {} : Lampa.Storage.get(RECS_DONE, '{}'), now = Date.now(), minYear = new Date().getFullYear() - 20;
+        var kind = function (h) { return h.number_of_seasons || h.seasons || h.first_air_date ? 'tv' : 'movie'; };
+        var todo = history.filter(function (h) { return ['cub', 'tmdb'].indexOf(h.source) >= 0 && !(done[kind(h) + h.id] > now - 14 * 864e5); }).reverse();
+        var inHistory = {}, have = {};
         history.forEach(function (h) { inHistory[h.id] = 1; });
+        list.forEach(function (r) { have[r.id] = 1; });
+        var save = function () { Lampa.Storage.set(RECS, list); Lampa.Storage.set(RECS_DONE, done); };
         (function next(i) {
-            if (i >= todo.length) return;
-            var h = todo[i], type = h.number_of_seasons || h.seasons || h.first_air_date ? 'tv' : 'movie';
+            if (i >= todo.length) return save();
+            var h = todo[i], type = kind(h);
             var net = new Lampa.Reguest();
             net.timeout(10000);
             net.silent(Lampa.TMDB.api(type + '/' + h.id + '/recommendations?api_key=' + Lampa.TMDB.key() + '&language=' + (Lampa.Storage.field('tmdb_lang') || 'ru')), function (json) {
-                var list = Lampa.Storage.cache(RECS, RECS_MAX, []), have = {};
-                list.forEach(function (r) { have[r.id] = 1; });
                 (json && json.results || []).forEach(function (r) {
                     var year = parseInt((r.first_air_date || r.release_date || '0').slice(0, 4), 10);
                     if (have[r.id] || inHistory[r.id] || !(year > minYear)) return;
-                    var slim = { source: 'tmdb' };
-                    KEEP.forEach(function (k) { if (r[k] !== undefined) slim[k] = r[k]; });
-                    list.push(slim);
+                    list.push(Object.assign(slim(r), { source: 'tmdb' }));
                     have[r.id] = 1;
                 });
-                Lampa.Storage.set(RECS, list.slice(-RECS_MAX));
-                done[h.id] = Date.now();
-                Lampa.Storage.set(RECS_DONE, done);
+                done[type + h.id] = Date.now();
+                if (i % 10 === 9) save(); // not the whole list every 1.5 s
                 setTimeout(function () { next(i + 1); }, 1500);
             }, function () { setTimeout(function () { next(i + 1); }, 1500); });
         })(0);

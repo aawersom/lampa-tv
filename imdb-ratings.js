@@ -15,14 +15,27 @@
 (function () {
     'use strict';
     if (window.lampa_tv_imdb_ratings) return;
-    window.lampa_tv_imdb_ratings = '1.4.0';
+    window.lampa_tv_imdb_ratings = '1.4.1';
 
     var CACHE_KEY = 'lampa_tv_imdb_cache';
     var TTL = 14 * 24 * 3600 * 1000;
     var cache = null;
 
+    // every tile on screen leaves an entry (~50 chars) and nothing else removes them; localStorage is ~2.8M of ~5M chars,
+    // and a full one makes Lampa move whatever key it writes next to IndexedDB. So once per start: entries older than
+    // 4 weeks go, and at most the newest 4000 stay.
+    var KEEP_MAX = 4000;
     function load() {
-        if (!cache) { try { cache = Lampa.Storage.get(CACHE_KEY, '{}') || {}; } catch (e) { cache = {}; } }
+        if (cache) return cache;
+        try { cache = Lampa.Storage.get(CACHE_KEY, '{}') || {}; } catch (e) { cache = {}; }
+        var now = Date.now(), keys = Object.keys(cache).filter(function (k) { return cache[k] && now - cache[k].t < 2 * TTL; });
+        if (keys.length !== Object.keys(cache).length || keys.length > KEEP_MAX) {
+            keys.sort(function (a, b) { return cache[b].t - cache[a].t; });
+            var kept = {};
+            keys.slice(0, KEEP_MAX).forEach(function (k) { kept[k] = cache[k]; });
+            cache = kept;
+            Lampa.Storage.set(CACHE_KEY, cache);
+        }
         return cache;
     }
     var saveTimer = null;
@@ -61,7 +74,9 @@
     // empty «через раз». caching.graphql.imdb.com answered every time (~0.6 s) and takes a whole screen of titles at once.
     var IMDB = 'https://caching.graphql.imdb.com/';
     var IMDB_HEADERS = { 'Content-Type': 'application/json', 'x-imdb-client-name': 'imdb-web-next-localized' };
-    var queue = [], asked = {}, flushTimer = null, running = 0;
+    // IMDb silent (a torrent filling the line): OMDb only for titles showing no number at all, and for 5 min the others are
+    // not asked — a few main-page visits would otherwise spend the owner's 1000/day OMDb key, shared with ratings+ (ko3ik)
+    var queue = [], asked = {}, flushTimer = null, running = 0, imdbDownUntil = 0;
     function omdb(tt, done) {
         var key = Lampa.Storage.get('ratings_omdb_key', '');
         if (!key) return done(undefined);
@@ -101,13 +116,17 @@
         imdbBatch(jobs.map(function (j) { return j.tt; }), function (res) {
             running--;
             if (res) jobs.forEach(function (j) { settle(j, j.tt in res ? res[j.tt] : undefined); });
-            else jobs.forEach(function (j) { omdb(j.tt, function (r) { settle(j, r); }); });
+            else {
+                imdbDownUntil = Date.now() + 5 * 60 * 1000;
+                jobs.forEach(function (j) { if (j.need) omdb(j.tt, function (r) { settle(j, r); }); else settle(j, undefined); });
+            }
             if (queue.length) flush();
         });
     }
-    function ask(tt, cb) {
-        if (asked[tt]) return asked[tt].cbs.push(cb);
-        var job = asked[tt] = { tt: tt, cbs: [cb] };
+    function ask(tt, cb, need) { // need: nothing is shown for it yet
+        if (!need && Date.now() < imdbDownUntil) return cb(undefined);
+        if (asked[tt]) { asked[tt].need = asked[tt].need || need; return asked[tt].cbs.push(cb); }
+        var job = asked[tt] = { tt: tt, cbs: [cb], need: !!need };
         queue.push(job);
         if (!flushTimer) flushTimer = setTimeout(flush, 150); // a screen of tiles comes in one burst → one request
     }
@@ -140,17 +159,18 @@
         var data = card.card_data;
         if (!data || data.cub_hundred_fire) return; // «сотня» CUB shows fire counts, not a rating
         card.__imdbDone = true;
-        paint(card, known(data)); // the last IMDb answer, else CUB's value, until IMDb answers now
+        var shown = known(data);
+        paint(card, shown); // the last IMDb answer, else CUB's value, until IMDb answers now
         if (fresh(data)) return;
         var update = function (r) { if (r !== undefined) paint(card, r); }; // IMDb silent: keep what is shown
         whenVisible(card, function () {
             var tt = imdbOf(data);
-            if (tt) return ask(tt, update);
+            if (tt) return ask(tt, update, !shown);
             imdbId(data, function (id) {
                 if (!id) return;
                 var d = Object.assign({}, data, { imdb_id: id });
                 if (fresh(d)) return paint(card, known(d));
-                ask(id, update);
+                ask(id, update, !shown);
             });
         });
     }
@@ -206,19 +226,21 @@
         if (e.type !== 'complite' || !e.data || !e.data.movie) return;
         var movie = e.data.movie;
         var body = e.body && e.body[0] ? e.body[0] : document;
+        // Lampa writes CUB's (lagging) value into the badge; an IMDb answer replaces it, so the card says what the tile says.
+        // Without an IMDb answer a badge the ratings plugin hid is put back with the known value.
         var guard = function () {
             var box = body.querySelector('.rate--imdb');
-            var value = known(movie);
-            if (!box || !value || !box.classList.contains('hide')) return;
+            var c = rating(movie), value = known(movie);
+            if (!box || !value || (!c && !box.classList.contains('hide'))) return;
             box.classList.remove('hide');
             var divs = box.children;
-            if (divs[0]) divs[0].textContent = value;
+            if (divs[0] && divs[0].textContent !== value) divs[0].textContent = value;
         };
         [1500, 3000, 6000, 12000].forEach(function (ms) { setTimeout(guard, ms); });
         // the card's own value may be CUB's (behind IMDb) or none at all (a card from TMDB: search, filter, «Похожие»), and
         // the ratings plugin's OMDb may not answer: the rating is asked from IMDb here; the tiles take it from the cache too
         var tt = imdbOf(movie);
-        if (tt && !fresh(movie)) ask(tt, function () { guard(); });
+        if (tt && !fresh(movie)) ask(tt, function () { guard(); }, !known(movie));
     });
 
     console.log('ImdbRatings', 'ready', window.lampa_tv_imdb_ratings);
