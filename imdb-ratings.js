@@ -2,9 +2,10 @@
  * Lampa: IMDb rating everywhere — owner's TV tweak (Lampa 3.x). Owner: «в превью показывался рейтинг imdb основным,
  * tmdb мне там не нужен»; «imdb появляется на мгновение и тут же пропадает».
  * 1) Poster tiles. Lampa's card «Ratting» module writes TMDB vote_average into `.card__vote`. Here the tile shows the
- *    IMDb rating instead: from the card data (CUB lists carry imdb_rating), else from this plugin's cache, else IMDb's
- *    own API by imdb_id (a screen of tiles in one request; OMDb with the owner's key only if IMDb does not answer) —
- *    only for tiles that come on screen, cached for 14 days. A tile without a known IMDb rating shows no number (no TMDB fallback).
+ *    IMDb rating instead, asked from IMDb's own API by imdb_id (a screen of tiles in one request; OMDb with the owner's
+ *    key only if IMDb does not answer) for tiles that come on screen; until it answers the tile shows the last IMDb answer
+ *    or CUB's value (CUB lists carry a lagging imdb_rating). Asked again daily for titles out less than half a year, every
+ *    14 days for others. A tile without a known IMDb rating shows no number (no TMDB fallback).
  *    The badge colour follows the rating: 8+ green, 7–7.9 light green, 6–6.9 IMDb yellow, 5–5.9 orange, below red.
  * 2) Movie card. Lampa shows the IMDb rating it got from CUB; then the ratings plugin (ko3ik) asks OMDb and, when it
  *    gets nothing (no imdb_id because TMDB is blocked, OMDb error), hides `.rate--imdb` — the rating flashes and
@@ -14,7 +15,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_imdb_ratings) return;
-    window.lampa_tv_imdb_ratings = '1.3.0';
+    window.lampa_tv_imdb_ratings = '1.4.0';
 
     var CACHE_KEY = 'lampa_tv_imdb_cache';
     var TTL = 14 * 24 * 3600 * 1000;
@@ -25,21 +26,34 @@
         return cache;
     }
     var saveTimer = null;
-    function remember(tt, rating) {
-        load()[tt] = { r: rating, t: Date.now() };
+    // ratings asked from IMDb itself carry v:2; older entries may hold CUB's value (1.3 stored it from the card)
+    function remember(tt, rating, mapping) {
+        load()[tt] = mapping ? { r: rating, t: Date.now() } : { r: rating, t: Date.now(), v: 2 };
         clearTimeout(saveTimer);
         saveTimer = setTimeout(function () { Lampa.Storage.set(CACHE_KEY, cache); }, 3000);
     }
-    function cached(tt) {
+    function cached(tt) { // a tmdb:… → tt… mapping
         var c = tt && load()[tt];
         return c && Date.now() - c.t < TTL ? c.r : null;
     }
-
+    function imdbOf(data) { return data && (data.imdb_id || (data.external_ids && data.external_ids.imdb_id)) || null; }
+    // CUB's IMDb ratings lag behind: «Сейчас смотрят» 2026-10-24, 19 of 111 off by 0.2+ (Клэйфейс CUB 9.0, IMDb 7.6), and a
+    // fresh title's rating moves for weeks. So CUB's value is shown only until IMDb answers, and the rating of a title out
+    // less than half a year is asked again daily, others every 14 days.
+    function ttl(data) {
+        var d = Date.parse(data && (data.release_date || data.first_air_date) || '');
+        return !d || Date.now() - d < 180 * 864e5 ? 864e5 : TTL;
+    }
+    function rating(data) { // { r: '7.6' | '-' } asked from IMDb, or null
+        var c = load()[imdbOf(data)];
+        return c && c.v === 2 ? c : null;
+    }
+    function fresh(data) { var c = rating(data); return !!c && Date.now() - c.t < ttl(data); }
     function known(data) {
+        var c = rating(data);
+        if (c) return c.r === '-' ? null : c.r;
         var r = parseFloat(data && data.imdb_rating);
-        if (r > 0) return r.toFixed(1);
-        var c = cached(data && (data.imdb_id || (data.external_ids && data.external_ids.imdb_id)));
-        return c && c !== '-' ? c : null;
+        return r > 0 ? r.toFixed(1) : null;
     }
 
     // ---- IMDb ratings: IMDb's own API, many titles per request; OMDb only if IMDb does not answer ----
@@ -76,8 +90,8 @@
     }
     function settle(job, r) {
         delete asked[job.tt]; // a later ask goes to the cache, or asks again after a failure
-        if (r !== undefined) remember(job.tt, r || '-'); // '-' = IMDb has no rating; do not ask again for 14 days
-        job.cbs.forEach(function (cb) { cb(r || null); });
+        if (r !== undefined) remember(job.tt, r || '-'); // '-' = IMDb has no rating
+        job.cbs.forEach(function (cb) { cb(r === undefined ? undefined : r || null); }); // undefined = IMDb did not answer
     }
     function flush() {
         flushTimer = null;
@@ -126,18 +140,17 @@
         var data = card.card_data;
         if (!data || data.cub_hundred_fire) return; // «сотня» CUB shows fire counts, not a rating
         card.__imdbDone = true;
-        var value = known(data);
-        if (value) return paint(card, value);
-        var tt = data.imdb_id || (data.external_ids && data.external_ids.imdb_id);
-        if (cached(tt) === '-') return paint(card, null);
-        paint(card, null);
+        paint(card, known(data)); // the last IMDb answer, else CUB's value, until IMDb answers now
+        if (fresh(data)) return;
+        var update = function (r) { if (r !== undefined) paint(card, r); }; // IMDb silent: keep what is shown
         whenVisible(card, function () {
-            if (tt) return ask(tt, function (r) { paint(card, r); });
+            var tt = imdbOf(data);
+            if (tt) return ask(tt, update);
             imdbId(data, function (id) {
                 if (!id) return;
-                var c = cached(id);
-                if (c) return paint(card, c === '-' ? null : c);
-                ask(id, function (r) { paint(card, r); });
+                var d = Object.assign({}, data, { imdb_id: id });
+                if (fresh(d)) return paint(card, known(d));
+                ask(id, update);
             });
         });
     }
@@ -153,7 +166,7 @@
         net.timeout(10000);
         net.silent(Lampa.TMDB.api(type + '/' + data.id + '/external_ids?api_key=' + Lampa.TMDB.key()), function (j) {
             var id = j && j.imdb_id ? j.imdb_id : null;
-            remember(key, id || '-');
+            remember(key, id || '-', true);
             done(id);
         }, function () { done(null); });
     }
@@ -202,11 +215,10 @@
             if (divs[0]) divs[0].textContent = value;
         };
         [1500, 3000, 6000, 12000].forEach(function (ms) { setTimeout(guard, ms); });
-        var tt = movie.imdb_id || (movie.external_ids && movie.external_ids.imdb_id);
-        if (tt && parseFloat(movie.imdb_rating) > 0) remember(tt, parseFloat(movie.imdb_rating).toFixed(1));
-        // a card opened from TMDB (search, filter, «Похожие») carries no IMDb rating and the ratings plugin's OMDb may
-        // not answer: the rating is asked from IMDb here, the guard above then shows it
-        else if (tt && !cached(tt)) ask(tt, function () { guard(); });
+        // the card's own value may be CUB's (behind IMDb) or none at all (a card from TMDB: search, filter, «Похожие»), and
+        // the ratings plugin's OMDb may not answer: the rating is asked from IMDb here; the tiles take it from the cache too
+        var tt = imdbOf(movie);
+        if (tt && !fresh(movie)) ask(tt, function () { guard(); });
     });
 
     console.log('ImdbRatings', 'ready', window.lampa_tv_imdb_ratings);

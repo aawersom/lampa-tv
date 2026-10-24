@@ -9,7 +9,7 @@ parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pag
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
 Versions on the TV (2026-10-18): ru-torrents 1.15.0, similar 1.1.0, quick-start 1.6.1, no-dmca 1.1.0, poster-heal 1.3.3,
-no-tv-channels 1.0.0, imdb-ratings 1.3.0, tmdb-route 1.2.0, catalog-next 1.6.0, tor-updater 0.1.6-tv.1, imdb-filter 1.0.3.
+no-tv-channels 1.0.0, imdb-ratings 1.4.0, tmdb-route 1.2.0, catalog-next 1.6.0, tor-updater 0.1.6-tv.1, imdb-filter 1.0.3.
 
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
   whatever sort is chosen in «Сортировать», Russian releases come first, then the rest; inside each group
@@ -37,8 +37,8 @@ no-tv-channels 1.0.0, imdb-ratings 1.3.0, tmdb-route 1.2.0, catalog-next 1.6.0, 
   (after the screensaver / external player), when the network returns, and every 30 s while such stubs exist.
 - `no-tv-channels.js` — Lampa stops asking the app to rebuild its Android TV home-screen rows (the app bridge's
   `updateChannel` is muted, every other bridge call passes); the app's 15-minute timer is stopped separately (appops).
-- `imdb-ratings.js` — poster tiles show the IMDb rating instead of TMDB (card data → cache → OMDb by imdb_id, TMDB external_ids
-  when a list carries none; on-screen tiles only, cached 14 days; no number when IMDb is unknown; badge colour by rating: 8+ green, 7 light green, 6 yellow, 5 orange, lower red); on the movie card a known
+- `imdb-ratings.js` — poster tiles show the IMDb rating instead of TMDB (asked from IMDb by imdb_id, a screen of tiles per request, OMDb only if IMDb is silent; TMDB external_ids
+  when a list carries no imdb_id; CUB's lagging imdb_rating is shown only until IMDb answers; re-asked daily for titles out less than half a year, every 14 days for others; no number when IMDb is unknown; badge colour by rating: 8+ green, 7 light green, 6 yellow, 5 orange, lower red); on the movie card a known
   IMDb rating is put back when the ratings plugin hides it after a failed lookup; the card shows no TMDB badge.
 - `tmdb-route.js` — TMDB API from a host this network can reach: every TMDB API request (Lampa's own and plugins' hardcoded
   api.themoviedb.org URLs, $.ajax and the Android app's native requests) goes to the host picked by asking api.themoviedb.org →
