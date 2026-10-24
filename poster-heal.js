@@ -9,7 +9,7 @@
  *    while a w300 poster is 30–50 KB) → imagetmdb.<cub> (400–650 ms) → image.tmdb.org. Not de.imagetmdb.com (hung on
  *    2 of 5 home probes). That order is only the fallback: the host actually used is the fastest one of the current
  *    network (probeHosts). A host that keeps failing (8 errors in 10 s, reported by the cards through TMDB.broken)
- *    hands over to the next one and a new race starts.
+ *    hands over to the next one outside Cloudflare/OVH and a new race starts.
  * 2) Heal. A card gives up on its poster for good (components/card onerror: 15-s timer, then «retry» of the same
  *    src counts as another error at once → after 3 the `.card__img-broken` stub with the region code and URL).
  *    The timers keep running while Lampa is frozen behind the screensaver or the external player, so on return a
@@ -20,7 +20,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_poster_heal) return;
-    window.lampa_tv_poster_heal = '1.3.1';
+    window.lampa_tv_poster_heal = '1.3.2';
 
     // ---- 1) hosts ----
     function hosts() {
@@ -40,6 +40,13 @@
     // Run at start, when the network comes back, after a long absence, and when the current host keeps failing.
     var PROBE = 't/p/w300/1sIAsLSaMwm3mb7Y6jISMv56McR.jpg', probing = false, probedAt = 0;
     function racer(host) { return !/\/\/(imagetmdb\.com|pl\.imagetmdb\.com|image\.tmdb\.org)\//.test(host); }
+    // A failing host hands over to the next racer, never to Cloudflare/OVH: TV 2026-10-24, a torrent filled the line,
+    // nl.imagetmdb.com timed out and the plain «next» went nl → pl → imagetmdb.com, where every poster died.
+    function nextRacer(from) {
+        var list = hosts();
+        for (var k = 1; k < list.length; k++) if (racer(list[(from + k) % list.length])) return (from + k) % list.length;
+        return from;
+    }
     function probeHosts() {
         if (probing) return;
         probing = true;
@@ -83,7 +90,7 @@
                 errors = errors.filter(function (t) { return now - t < 10000; });
                 if (errors.length >= 8) {
                     errors = [];
-                    current = (current + 1) % hosts().length;
+                    current = nextRacer(current);
                     console.log('PosterHeal', 'host failing, next:', hosts()[current]);
                     probeHosts();
                 }

@@ -8,7 +8,7 @@ the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa k
 parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
-Versions on the TV (2026-10-18): ru-torrents 1.15.0, similar 1.1.0, quick-start 1.6.1, no-dmca 1.1.0, poster-heal 1.3.1,
+Versions on the TV (2026-10-18): ru-torrents 1.15.0, similar 1.1.0, quick-start 1.6.1, no-dmca 1.1.0, poster-heal 1.3.2,
 no-tv-channels 1.0.0, imdb-ratings 1.3.0, tmdb-route 1.1.0, catalog-next 1.5.0, tor-updater 0.1.6-tv.1, imdb-filter 1.0.2.
 
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
@@ -33,7 +33,7 @@ no-tv-channels 1.0.0, imdb-ratings 1.3.0, tmdb-route 1.1.0, catalog-next 1.5.0, 
 - `no-dmca.js` — no content restrictions: cards blocked «по требованию правообладателя» open (Lampa's blocked-id list is ignored, a CUB stub
   is replaced with the card details from TMDB); the LGBT filter is off (its list is never loaded).
 - `poster-heal.js` — posters come from the hosts fastest from Russian home ISPs, all reachable abroad too (lampa.byskaz.ru → nl.imagetmdb.com → pl.imagetmdb.com → imagetmdb.com → CUB → image.tmdb.org,
-  next host after repeated errors); a poster Lampa gave up on («EE» + URL stub) is loaded again, from every host in turn: when Lampa is visible again
+  next host outside Cloudflare/OVH after repeated errors); a poster Lampa gave up on («EE» + URL stub) is loaded again, from every host in turn: when Lampa is visible again
   (after the screensaver / external player), when the network returns, and every 30 s while such stubs exist.
 - `no-tv-channels.js` — Lampa stops asking the app to rebuild its Android TV home-screen rows (the app bridge's
   `updateChannel` is muted, every other bridge call passes); the app's 15-minute timer is stopped separately (appops).
