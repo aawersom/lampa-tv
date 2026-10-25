@@ -1,162 +1,181 @@
 /*
- * Lampa: posters — reachable host first, heal what broke — owner's TV tweak (Lampa 3.x).
- * 1) Hosts. Lampa takes posters from image.tmdb.org unless its geo check (geo.<cub>, at start) says RU/BY and
- *    the TMDB proxy is on. image.tmdb.org is refused from Moscow (check-host.net ru1/ru2, 2026-10-14), and the
- *    geo check does not run again when the TV changes networks. Here posters always come from a host chain ordered
- *    by speed from Russian home ISPs (Globalping MTS, Rostelecom, SkyNet…, two posters, 2026-10-16), all of them
- *    also fine from Estonia: lampa.byskaz.ru/tmdb/img (Russia, 16–205 ms) → nl.imagetmdb.com (88–253 ms) →
- *    pl.imagetmdb.com → imagetmdb.com (Cloudflare: 210–495 ms, and Russian ISPs cut Cloudflare answers at 16 KB
- *    while a w300 poster is 30–50 KB) → imagetmdb.<cub> (400–650 ms) → image.tmdb.org. Not de.imagetmdb.com (hung on
- *    2 of 5 home probes). That order is only the fallback: the host actually used is the fastest one of the current
- *    network (probeHosts). A host that keeps failing (8 errors in 10 s, reported by the cards through TMDB.broken)
- *    hands over to the next one outside Cloudflare/OVH and a new race starts.
- * 2) Heal. A card gives up on its poster for good (components/card onerror: 15-s timer, then «retry» of the same
- *    src counts as another error at once → after 3 the `.card__img-broken` stub with the region code and URL).
- *    The timers keep running while Lampa is frozen behind the screensaver or the external player, so on return a
- *    whole page of posters «times out» in the same millisecond; a Wi-Fi switch does the same. A broken poster is
- *    loaded again — from every host in turn — when Lampa becomes visible, when the network comes back, and every
- *    30 s while broken posters exist. The stub stays only if every host fails.
+ * Lampa: posters — each poster from a host that keeps it, another host for every retry — owner's TV tweak (Lampa 3.x).
+ * 1) Hosts. Lampa takes posters from image.tmdb.org unless its geo check says RU/BY; from the TV's line image.tmdb.org
+ *    resolves to 127.0.0.1 (router DNS) and Cloudflare/OVH answers come at 10–11 s a poster (pl.imagetmdb.com,
+ *    imagetmdb.com; 12 posters each, curl on the TV, 2026-10-24). What did work, 12 of 12 even 12 at once:
+ *    lampa.byskaz.ru/tmdb/img 0.07 s, nl.imagetmdb.com 0.3 s, de.imagetmdb.com 0.4 s, imagetmdb.<cub> 10 of 12.
+ *    nl, de and CUB send `Cache-Control: max-age=31919000`, byskaz sends no cache headers at all: with byskaz picked
+ *    as «fastest» (1.1–1.3) the WebView fetched every poster again on every screen. So:
+ *    - each poster always comes from the same cacheable host — nl or de by a hash of its path, half each: twice the
+ *      connections (the WebView opens 6 per host) and the next showing comes from the disk cache;
+ *    - Lampa gives a poster's first load 15 s, then asks for it again 2 s after each failure (components/card, up to
+ *      4 tries): every new try of the same poster goes to the next working host after the one that failed — the other
+ *      of nl/de, byskaz, CUB — never the same host twice in a row. A screen of 30–40 posters on a line a torrent fills
+ *      ran past the 15 s in the queue (2026-10-25 19:15, 20 «noload» in one millisecond);
+ *    - those 15-s timeouts come a screen at a time (also back from the player or the screensaver: the timers ran
+ *      while Lampa was frozen), so 8 errors of a host in 10 s only make it be checked with one small poster; it is
+ *      set aside for 10 min, its posters going to the next host, only if that check fails. Every host is checked
+ *      at start, when the network comes back and after a long absence.
+ * 2) Heal. Posters loaded again — from every working host in turn, Cloudflare/OVH last — 3 s after a failure, when
+ *    Lampa is visible again, when the network comes back, and every 30 s: the cards that gave up
+ *    (`.card__img-broken`: region code + URL), and Lampa's retries still hanging 20 s after the last failure (a retry
+ *    has no 15-s timer, it would never fail nor become a stub). At most 3 times a poster.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_poster_heal) return;
-    window.lampa_tv_poster_heal = '1.3.3';
+    window.lampa_tv_poster_heal = '1.4.0';
 
     // ---- 1) hosts ----
-    function hosts() {
+    var CACHED = ['http://nl.imagetmdb.com/', 'http://de.imagetmdb.com/'];
+    function backup() {
         var cub = (window.Lampa && Lampa.Manifest && Lampa.Manifest.cub_domain) || 'cub.black';
-        var list = ['http://lampa.byskaz.ru/tmdb/img/', 'http://nl.imagetmdb.com/', 'http://pl.imagetmdb.com/', 'http://imagetmdb.com/',
-            'https://imagetmdb.' + cub + '/', 'https://image.tmdb.org/'];
-        return location.protocol === 'https:' ? list.filter(function (h) { return h.indexOf('http:') !== 0; }) : list; // no http host on an https page
+        return ['http://lampa.byskaz.ru/tmdb/img/', 'https://imagetmdb.' + cub + '/'];
     }
-    var current = 0;
-    var errors = [];
-    var healSoon;
+    var LAST = ['http://pl.imagetmdb.com/', 'http://imagetmdb.com/', 'https://image.tmdb.org/']; // heal only
+    var https = function (list) { return location.protocol === 'https:' ? list.filter(function (h) { return h.indexOf('http:') !== 0; }) : list; };
 
-    // The fastest host of THIS network: the hosts outside Cloudflare/OVH load the same full-size poster at once, the
-    // first complete load wins. A fixed order was wrong as soon as the TV changed networks — 2026-10-23, TV on a direct
-    // Moscow line (Altagen): lampa.byskaz.ru/tmdb/img hung for a while without an error, every card waited its 15-s timer.
-    // imagetmdb.com (Cloudflare) and pl.imagetmdb.com (OVH) are left out of the race: Russian ISPs cut such answers at
-    // ~16 KB, so a small probe passed and won while the 30–50 KB posters hung (main page 1 of 7). They stay as fallbacks.
-    // Run at start, when the network comes back, after a long absence, and when the current host keeps failing.
-    var PROBE = 't/p/w300/1sIAsLSaMwm3mb7Y6jISMv56McR.jpg', probing = false, probedAt = 0;
-    function racer(host) { return !/\/\/(imagetmdb\.com|pl\.imagetmdb\.com|image\.tmdb\.org)\//.test(host); }
-    // A failing host hands over to the next racer, never to Cloudflare/OVH: TV 2026-10-24, a torrent filled the line,
-    // nl.imagetmdb.com timed out and the plain «next» went nl → pl → imagetmdb.com, where every poster died.
-    function nextRacer(from) {
-        var list = hosts();
-        for (var k = 1; k < list.length; k++) if (racer(list[(from + k) % list.length])) return (from + k) % list.length;
-        return from;
+    var down = {}, errors = {}, pick = {}, brokenAt = {}, checking = {};
+    var up = function (h) { return !(down[h] > Date.now()); };
+    function hash(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); }
+    function chain(p) { // the hosts for one poster in the order its tries go: its cacheable host, the other one, the backups
+        var cached = https(CACHED), first = cached[hash(p) % cached.length];
+        return (first ? [first] : []).concat(cached.filter(function (h) { return h !== first; }), https(backup()));
     }
-    function probeHosts() {
-        if (probing) return;
-        probing = true;
-        probedAt = Date.now();
-        var list = hosts(), won = false, left = list.filter(racer).length;
-        var end = function () { if (--left === 0 || won) probing = false; };
-        list.forEach(function (host, i) {
-            if (!racer(host)) return;
-            var im = new Image();
-            var t = setTimeout(function () { im.src = ''; end(); }, 8000);
-            im.onload = function () {
-                clearTimeout(t);
-                if (!won && im.naturalWidth > 0) {
-                    won = true;
-                    if (current !== i) console.log('PosterHeal', 'fastest host now:', host);
-                    current = i;
-                }
-                end();
-            };
-            im.onerror = function () { clearTimeout(t); end(); };
-            im.src = host + PROBE + '?r=' + Date.now();
-        });
+    function firstUp(list) { return list.filter(up)[0] || list[0]; }
+    function after(p, failed) { // the next host after the one that just failed, never the same one again
+        var c = chain(p), i = c.indexOf(failed);
+        var rest = i < 0 ? c : c.slice(i + 1).concat(c.slice(0, i));
+        return firstUp(rest);
     }
-
     function path(url) { // 't/p/w300//abc.jpg' or a full poster URL → 't/p/w300/abc.jpg'
         var m = /(t\/p\/.*)$/.exec(String(url || ''));
         return m ? m[1].split('?')[0].replace(/\/+/g, '/') : '';
     }
 
+    // one small poster from each host: a host that answers is (back) in, one that does not is set aside for 10 min
+    function check(list) {
+        (list || https(CACHED.concat(backup()))).forEach(function (host) {
+            if (checking[host]) return;
+            checking[host] = true;
+            var im = new Image();
+            var settle = function (ok) {
+                clearTimeout(t);
+                checking[host] = false;
+                if (ok) delete down[host];
+                else {
+                    if (up(host)) console.log('PosterHeal', 'host does not answer, set aside for 10 min:', host);
+                    down[host] = Date.now() + 10 * 60 * 1000;
+                }
+            };
+            var t = setTimeout(function () { im.src = ''; settle(false); }, 8000);
+            im.onload = function () { settle(im.naturalWidth > 0); };
+            im.onerror = function () { settle(false); };
+            im.src = host + 't/p/w92/1sIAsLSaMwm3mb7Y6jISMv56McR.jpg?r=' + Date.now();
+        });
+        if (!list) checkedAt = Date.now();
+    }
+    var checkedAt = 0, healSoon;
+
     function patchTmdb() {
         if (!window.Lampa || !Lampa.TMDB || !Lampa.TMDB.image) return false;
         if (Lampa.TMDB.image.__posterHosts) return true;
-        var image = function (url) { return hosts()[current] + String(url).replace(/^\/+/, '').replace(/\/+/g, '/'); };
+        var image = function (url) {
+            var p = String(url).replace(/^\/+/, '').replace(/\/+/g, '/');
+            var host = pick[p] && up(pick[p]) ? pick[p] : firstUp(chain(p));
+            return host + p;
+        };
         image.__posterHosts = true;
         Lampa.TMDB.image = image;
         var broken = Lampa.TMDB.broken;
         Lampa.TMDB.broken = function (url) {
-            clearTimeout(healSoon);
-            healSoon = setTimeout(heal, 3000); // a poster just failed: load it again from another host now, not in up to 30 s
-            if (String(url || '').indexOf(hosts()[current]) === 0) {
-                var now = Date.now();
-                errors.push(now);
-                errors = errors.filter(function (t) { return now - t < 10000; });
-                if (errors.length >= 8) {
-                    errors = [];
-                    current = nextRacer(current);
-                    console.log('PosterHeal', 'host failing, next:', hosts()[current]);
-                    probeHosts();
-                }
+            var src = String(url || ''), p = path(src), now = Date.now();
+            var host = https(CACHED.concat(backup())).filter(function (h) { return src.indexOf(h) === 0; })[0];
+            if (p) {
+                pick[p] = after(p, host); // Lampa's next try of this poster goes to the next host
+                brokenAt[p] = now;
             }
+            if (host) {
+                // Lampa's 15-s timer fails a whole screen at once when the queue, not the host, is slow (back from the player
+                // or the screensaver, a torrent filling the line): 8 errors only make the host be checked with one poster
+                errors[host] = (errors[host] || []).filter(function (t) { return now - t < 10000; }).concat(now);
+                if (errors[host].length >= 8 && up(host)) { errors[host] = []; check([host]); }
+            }
+            clearTimeout(healSoon);
+            healSoon = setTimeout(heal, 3000);
             if (typeof broken === 'function') return broken.apply(this, arguments);
         };
-        console.log('PosterHeal', 'ready', window.lampa_tv_poster_heal, hosts()[current]);
+        console.log('PosterHeal', 'ready', window.lampa_tv_poster_heal);
         return true;
     }
 
     if (!patchTmdb()) {
-        var tries = 0;
-        var timer = setInterval(function () { if (patchTmdb() || ++tries > 60) clearInterval(timer); }, 500);
+        var waited = 0;
+        var timer = setInterval(function () { if (patchTmdb() || ++waited > 60) clearInterval(timer); }, 500);
     }
 
     // ---- 2) heal ----
     var busy = false;
 
-    function tryHosts(p, i, done) {
-        var list = hosts();
+    function tryHosts(list, p, i, done) {
         if (i >= list.length) return done(null);
-        var host = list[(current + i) % list.length];
         var probe = new Image();
         var settled = false;
         var once = function (ok) {
             if (settled) return;
             settled = true;
-            if (ok) done(probe.src); else tryHosts(p, i + 1, done);
+            if (!ok) probe.src = ''; // a hung load must not keep one of the host's 6 connections
+            if (ok) done(probe.src); else tryHosts(list, p, i + 1, done);
         };
-        setTimeout(function () { once(false); }, 15000); // a hung load must not block the next host
-        probe.onload = function () { once(true); };
+        setTimeout(function () { once(false); }, 15000);
+        probe.onload = function () { once(probe.naturalWidth > 0); };
         probe.onerror = function () { once(false); };
-        probe.src = host + p;
+        probe.src = list[i] + p;
+    }
+
+    // posters to load again: Lampa's stubs, and Lampa's retries still hanging 20 s after the last failure (only the first load
+    // has Lampa's 15-s timer, a stalled retry would never fail nor become a stub). Each at most 3 times.
+    function candidates() {
+        var out = [], now = Date.now();
+        Array.prototype.forEach.call(document.querySelectorAll('.card__img-broken'), function (stub) {
+            var img = stub.previousElementSibling, lines = stub.querySelectorAll('div > div');
+            var p = path(lines.length ? lines[lines.length - 1].textContent.trim() : '');
+            if (img && img.classList.contains('card__img') && p) out.push({ img: img, p: p, stub: stub });
+        });
+        Array.prototype.forEach.call(document.querySelectorAll('.card__img'), function (img) {
+            var p = path(img.getAttribute('src'));
+            if (p && brokenAt[p] && now - brokenAt[p] > 20000 && !(img.complete && img.naturalWidth > 0)) out.push({ img: img, p: p });
+        });
+        return out.filter(function (c) { return (c.img.__heal = (c.img.__heal || 0) + 1) <= 3; });
     }
 
     function heal() {
-        var stubs = document.querySelectorAll('.card__img-broken');
-        if (!stubs.length || busy) return;
+        if (busy) return;
+        var list = candidates();
+        if (!list.length) return;
         busy = true;
-        var left = stubs.length;
+        var left = list.length;
         var finish = function () { if (--left === 0) busy = false; };
-        Array.prototype.forEach.call(stubs, function (stub) {
-            var img = stub.previousElementSibling;
-            var lines = stub.querySelectorAll('div > div');
-            var p = path(lines.length ? lines[lines.length - 1].textContent.trim() : '');
-            if (!img || !img.classList.contains('card__img') || !p) return finish();
-            tryHosts(p, 0, function (src) {
+        list.forEach(function (c) {
+            var hosts = chain(c.p).filter(up).concat(chain(c.p).filter(function (h) { return !up(h); }), https(LAST));
+            tryHosts(hosts, c.p, 0, function (src) {
                 if (src) {
-                    img.onerror = function () {};
-                    img.src = src;
-                    if (stub.parentNode) stub.parentNode.removeChild(stub);
+                    c.img.onerror = function () {};
+                    c.img.src = src;
+                    delete brokenAt[c.p];
+                    if (c.stub && c.stub.parentNode) c.stub.parentNode.removeChild(c.stub);
                 }
                 finish();
             });
         });
     }
 
-    probeHosts();
+    check();
     document.addEventListener('visibilitychange', function () {
         if (document.hidden) return;
-        if (Date.now() - probedAt > 10 * 60 * 1000) probeHosts(); // back after a long while: the network may differ
+        if (Date.now() - checkedAt > 10 * 60 * 1000) check(); // back after a long while: the network may differ
         setTimeout(heal, 2000);
     });
-    window.addEventListener('online', function () { probeHosts(); setTimeout(heal, 2000); });
+    window.addEventListener('online', function () { check(); setTimeout(heal, 2000); });
     setInterval(heal, 30000);
 })();

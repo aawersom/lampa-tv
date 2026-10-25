@@ -2,20 +2,19 @@
  * Lampa: IMDb rating everywhere — owner's TV tweak (Lampa 3.x). Owner: «в превью показывался рейтинг imdb основным,
  * tmdb мне там не нужен»; «imdb появляется на мгновение и тут же пропадает».
  * 1) Poster tiles. Lampa's card «Ratting» module writes TMDB vote_average into `.card__vote`. Here the tile shows the
- *    IMDb rating instead, asked from IMDb's own API by imdb_id (a screen of tiles in one request; OMDb with the owner's
- *    key only if IMDb does not answer) for tiles that come on screen; until it answers the tile shows the last IMDb answer
- *    or CUB's value (CUB lists carry a lagging imdb_rating). Asked again daily for titles out less than half a year, every
+ *    IMDb rating instead, asked from IMDb's own API by imdb_id (a row of tiles in one request, no OMDb); until it answers
+ *    the tile shows the last IMDb answer or CUB's value (CUB lists carry a lagging imdb_rating). Asked again daily for titles out less than half a year, every
  *    14 days for others. A tile without a known IMDb rating shows no number (no TMDB fallback).
  *    The badge colour follows the rating: 8+ green, 7–7.9 light green, 6–6.9 IMDb yellow, 5–5.9 orange, below red.
  * 2) Movie card. Lampa shows the IMDb rating it got from CUB; then the ratings plugin (ko3ik) asks OMDb and, when it
  *    gets nothing (no imdb_id because TMDB is blocked, OMDb error), hides `.rate--imdb` — the rating flashes and
- *    vanishes. Here a hidden IMDb badge is put back with the known value, asked from IMDb when the card has none. The TMDB badge is not shown (owner, 2026-10-18:
+ *    vanishes. Here the badge shows IMDb's answer (asked when the card has no fresh one), put back if hidden. The TMDB badge is not shown (owner, 2026-10-18:
  *    «TMDB внутри у карточек убери рейтинг»).
  */
 (function () {
     'use strict';
     if (window.lampa_tv_imdb_ratings) return;
-    window.lampa_tv_imdb_ratings = '1.4.1';
+    window.lampa_tv_imdb_ratings = '1.5.0';
 
     var CACHE_KEY = 'lampa_tv_imdb_cache';
     var TTL = 14 * 24 * 3600 * 1000;
@@ -69,38 +68,35 @@
         return r > 0 ? r.toFixed(1) : null;
     }
 
-    // ---- IMDb ratings: IMDb's own API, many titles per request; OMDb only if IMDb does not answer ----
-    // OMDb sits behind Cloudflare: on the TV's direct Moscow line (2026-10-23) a request hung 30 s and the badge stayed
-    // empty «через раз». caching.graphql.imdb.com answered every time (~0.6 s) and takes a whole screen of titles at once.
+    // ---- IMDb ratings: IMDb's own API, 25 titles per request ----
+    // caching.graphql.imdb.com answered 5 of 5 from the TV line (0.3–0.5 s, 2026-10-24). OMDb is not asked: it sits behind
+    // Cloudflare and from that line hangs up to 27–30 s and fails (2026-10-23; 2026-10-25 logcat, ratings+), and the key is
+    // the owner's 1000/day, shared with ratings+. A batch IMDb did not answer is sent once more 3 s later; if that fails too,
+    // its tiles keep what they show and come back when shown again, and for 2 min only tiles with no number are asked.
     var IMDB = 'https://caching.graphql.imdb.com/';
     var IMDB_HEADERS = { 'Content-Type': 'application/json', 'x-imdb-client-name': 'imdb-web-next-localized' };
-    // IMDb silent (a torrent filling the line): OMDb only for titles showing no number at all, and for 5 min the others are
-    // not asked — a few main-page visits would otherwise spend the owner's 1000/day OMDb key, shared with ratings+ (ko3ik)
     var queue = [], asked = {}, flushTimer = null, running = 0, imdbDownUntil = 0;
-    function omdb(tt, done) {
-        var key = Lampa.Storage.get('ratings_omdb_key', '');
-        if (!key) return done(undefined);
-        var net = new Lampa.Reguest();
-        net.timeout(10000);
-        net.silent('https://www.omdbapi.com/?apikey=' + encodeURIComponent(key) + '&i=' + encodeURIComponent(tt), function (j) {
-            done(j && j.imdbRating && j.imdbRating !== 'N/A' ? parseFloat(j.imdbRating).toFixed(1) : null);
-        }, function () { done(undefined); });
-    }
     function imdbBatch(ids, done) { // → { tt: '8.2' | null } or null when IMDb did not answer
-        var net = new Lampa.Reguest();
+        var net = new Lampa.Reguest(), started = Date.now(), settled = false;
+        var finish = function (out) { if (settled) return; settled = true; clearTimeout(watchdog); done(out); };
+        var fail = function (why) { if (!settled) console.log('ImdbRatings', 'IMDb did not answer:', ids.length, 'titles,', Date.now() - started, 'ms,', why); finish(null); };
+        // the app's native request keeps its callbacks in one of 5000 random slots: two requests drawing the same slot lose
+        // one callback for good, and a batch that never ends would hold one of the 2 batch places forever
+        var watchdog = setTimeout(function () { fail('no answer in 15 s'); }, 15000);
         net.timeout(10000);
         // IMDb answers only its own site in a browser (CORS); Lampa's native request has no such limit
         net['native'](IMDB, function (json) {
+            var out = {};
             try {
                 if (typeof json === 'string') json = JSON.parse(json);
-                var out = {};
                 json.data.titles.forEach(function (t) {
                     var r = t && t.ratingsSummary && t.ratingsSummary.aggregateRating;
                     if (t) out[t.id] = r ? Number(r).toFixed(1) : null;
                 });
-                done(out);
-            } catch (e) { done(null); }
-        }, function () { done(null); }, JSON.stringify({ query: '{ titles(ids: ' + JSON.stringify(ids) + ') { id ratingsSummary { aggregateRating } } }' }),
+            } catch (e) { return fail('bad answer ' + (e && e.message)); }
+            finish(out); // outside the try: an error in a tile's callback is not IMDb not answering
+        }, function (a, b) { fail('network ' + (a && a.status !== undefined ? a.status : '') + ' ' + (b || '')); },
+        JSON.stringify({ query: '{ titles(ids: ' + JSON.stringify(ids) + ') { id ratingsSummary { aggregateRating } } }' }),
         { headers: IMDB_HEADERS, dataType: 'json' });
     }
     function settle(job, r) {
@@ -111,24 +107,27 @@
     function flush() {
         flushTimer = null;
         if (!queue.length || running >= 2) return;
-        var jobs = queue.splice(0, 25);
+        var jobs = queue.splice(0, 25), ids = jobs.map(function (j) { return j.tt; });
         running++;
-        imdbBatch(jobs.map(function (j) { return j.tt; }), function (res) {
-            running--;
-            if (res) jobs.forEach(function (j) { settle(j, j.tt in res ? res[j.tt] : undefined); });
-            else {
-                imdbDownUntil = Date.now() + 5 * 60 * 1000;
-                jobs.forEach(function (j) { if (j.need) omdb(j.tt, function (r) { settle(j, r); }); else settle(j, undefined); });
-            }
-            if (queue.length) flush();
-        });
+        (function send(again) {
+            imdbBatch(ids, function (res) {
+                if (!res && !again) return setTimeout(function () { send(true); }, 3000);
+                running--;
+                if (res) jobs.forEach(function (j) { settle(j, j.tt in res ? res[j.tt] : undefined); });
+                else {
+                    imdbDownUntil = Date.now() + 2 * 60 * 1000;
+                    jobs.forEach(function (j) { settle(j, undefined); });
+                }
+                if (queue.length) flush();
+            });
+        })(false);
     }
     function ask(tt, cb, need) { // need: nothing is shown for it yet
         if (!need && Date.now() < imdbDownUntil) return cb(undefined);
-        if (asked[tt]) { asked[tt].need = asked[tt].need || need; return asked[tt].cbs.push(cb); }
-        var job = asked[tt] = { tt: tt, cbs: [cb], need: !!need };
-        queue.push(job);
-        if (!flushTimer) flushTimer = setTimeout(flush, 150); // a screen of tiles comes in one burst → one request
+        if (asked[tt]) return asked[tt].cbs.push(cb);
+        asked[tt] = { tt: tt, cbs: [cb] };
+        queue.push(asked[tt]);
+        if (!flushTimer) flushTimer = setTimeout(flush, 150); // the tiles of a row come in one burst → one request
     }
 
     // ---- 1) tiles ----
@@ -163,9 +162,11 @@
         paint(card, shown); // the last IMDb answer, else CUB's value, until IMDb answers now
         if (fresh(data)) return;
         var update = function (r) { if (r !== undefined) paint(card, r); }; // IMDb silent: keep what is shown
+        // a tile with its imdb_id (CUB lists) is asked at once, with its whole row in one request — the rating is there
+        // before the row is scrolled; a TMDB tile needs one external_ids request first, so that waits until it is shown
+        var tt = imdbOf(data);
+        if (tt) return ask(tt, update, !shown);
         whenVisible(card, function () {
-            var tt = imdbOf(data);
-            if (tt) return ask(tt, update, !shown);
             imdbId(data, function (id) {
                 if (!id) return;
                 var d = Object.assign({}, data, { imdb_id: id });

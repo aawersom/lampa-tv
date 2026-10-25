@@ -19,7 +19,7 @@ function setup(store, imdb, omdbCalls) {
   Lampa.Reguest.prototype.silent = function (url, ok) { if (omdbCalls) omdbCalls.push(url); ok({ imdbRating: '5.5' }); };
   if (omdbCalls) store.ratings_omdb_key = 'key';
   const fakeTimeout = (fn) => { timers.push(fn); return timers.length; };
-  const api = new Function('Lampa', 'setTimeout', 'clearTimeout', 'document', body + '\nfunction whenVisible(card, fn) { fn(); }\nreturn { tile: tile };')(Lampa, fakeTimeout, () => {}, {});
+  const api = new Function('Lampa', 'setTimeout', 'clearTimeout', 'document', 'console', body + '\nfunction whenVisible(card, fn) { fn(); }\nreturn { tile: tile };')(Lampa, fakeTimeout, () => {}, {}, { log() {} });
   const run = () => { while (timers.length) timers.shift()(); };
   return { api, run, requests };
 }
@@ -75,7 +75,7 @@ t.api.tile(card({ id: 9, imdb_id: 'tt1000', release_date: '2010-01-01' }));
 const kept = store.lampa_tv_imdb_cache;
 check('cache pruned to the newest 4000, month-old entry gone', [Object.keys(kept).length, 'tt1000' in kept, 'ttold' in kept, 'tt5099' in kept], [4000, true, false, false]);
 
-// IMDb silent: OMDb only for a tile showing nothing; tiles with CUB's value are not asked again for 5 min
+// IMDb silent: asked once more 3 s later, never OMDb; tiles keep what they show; for 2 min tiles with a number wait
 store = {};
 const omdbCalls = [];
 t = setup(store, null, omdbCalls);
@@ -83,11 +83,12 @@ const withCub = card({ id: 10, imdb_id: 'tt10', imdb_rating: 7.1, release_date: 
 const empty = card({ id: 11, imdb_id: 'tt11', release_date: ago(10) });
 [withCub, empty].forEach((x) => t.api.tile(x));
 t.run();
-check('OMDb asked only for the tile with no number', [omdbCalls.length, /tt11/.test(omdbCalls[0] || ''), withCub.vote.textContent, empty.vote.textContent], [1, true, '7.1', '5.5']);
+check('IMDb silent: one retry, no OMDb, CUB value kept', [t.requests.length, omdbCalls.length, withCub.vote.textContent, empty.vote.style.display], [2, 0, '7.1', 'none']);
 const later = card({ id: 12, imdb_id: 'tt12', imdb_rating: 6.0, release_date: ago(10) });
-t.api.tile(later);
+const laterEmpty = card({ id: 13, imdb_id: 'tt13', release_date: ago(10) });
+[later, laterEmpty].forEach((x) => t.api.tile(x));
 t.run();
-check('during the 5-min pause a tile with a value is not asked', [t.requests.length, omdbCalls.length, later.vote.textContent], [1, 1, '6.0']);
+check('within 2 min: only the tile with no number is asked', [t.requests.slice(2).map((r) => r.join(',')), later.vote.textContent], [['tt13', 'tt13'], '6.0']);
 process.exitCode = failed ? 1 : 0;
 
 // movie card: Lampa wrote CUB's 9.0 into a visible badge; IMDb's answer (7.6) replaces it
@@ -102,5 +103,17 @@ process.exitCode = failed ? 1 : 0;
   follows[0]({ type: 'complite', data: { movie: { imdb_id: 'tt7', imdb_rating: 9.0, release_date: ago(5) } }, body: [doc] });
   timers2.forEach((fn) => fn());
   check('card badge: IMDb 7.6 replaces CUB 9.0 even when visible', badge.children[0].textContent, '7.6');
+  process.exitCode = failed ? 1 : 0;
+}
+
+// a tile callback that throws must not count as IMDb not answering (no second request, no double settle)
+{
+  const store3 = {};
+  const t3 = setup(store3, { tt20: 7.0 });
+  const c20 = card({ id: 20, imdb_id: 'tt20', release_date: ago(10) });
+  c20.vote.setAttribute = () => { throw new Error('paint broke'); };
+  t3.api.tile(c20);
+  try { t3.run(); } catch (e) { /* the throw reaches the caller, as in the WebView */ }
+  check('a throwing tile callback: no second request (not taken for IMDb silence)', t3.requests.length, 1);
   process.exitCode = failed ? 1 : 0;
 }

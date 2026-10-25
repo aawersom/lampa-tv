@@ -11,31 +11,37 @@
  * own proxy when cub_domain is cub.black): it answers only from its cache and redirects a miss to the blocked TMDB.
  * The host is picked by asking each one in turn for /configuration with a cache-busting parameter (a cached answer
  * would pass a proxy that cannot reach TMDB): at start, when the network comes back, when Lampa becomes visible
- * again, and after 3 failed TMDB requests in 15 s. The pick is kept for the next start.
+ * again, and after a failed TMDB request (at most every 30 s). The pick is kept for the next start.
+ * Order: the mirrors first, api.themoviedb.org last. From the TV line TMDB itself answers, then refuses in 20–100 ms
+ * (2026-10-25: picked at start, it failed Lampa's background requests 14:02–19:12 one every 2 min — never the «3 in
+ * 15 s» that 1.2 waited for), while lampa.byskaz.ru answered 12 of 12 and the other mirrors too.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_tmdb_route) return;
-    window.lampa_tv_tmdb_route = '1.2.1';
+    window.lampa_tv_tmdb_route = '1.3.0';
 
     var KEY = 'lampa_tv_tmdb_route';
     var TMDB_API = /^https?:\/\/(api\.themoviedb\.org\/3|apitmdb\.[^\/]+\/3|lampa\.byskaz\.ru\/tmdb\/api\/3|tmdb-api\.rootu\.top\/3|tmdbapi\.bylampa\.online\/3)\//;
 
     function hosts() {
-        var list = ['https://api.themoviedb.org/3/', 'http://lampa.byskaz.ru/tmdb/api/3/', 'http://tmdb-api.rootu.top/3/',
-            'http://tmdbapi.bylampa.online/3/', 'https://apitmdb.cub.best/3/'];
+        var list = ['http://lampa.byskaz.ru/tmdb/api/3/', 'http://tmdb-api.rootu.top/3/', 'http://tmdbapi.bylampa.online/3/',
+            'https://apitmdb.cub.best/3/', 'https://api.themoviedb.org/3/'];
         return location.protocol === 'https:' ? list.filter(function (h) { return h.indexOf('http:') !== 0; }) : list; // no http mirror on an https page
     }
 
     var saved = Lampa.Storage.get(KEY, '');
     var current = hosts().indexOf(saved) >= 0 ? saved : hosts()[0];
-    var probing = false, lastProbe = 0, errors = [];
+    var probing = false, lastProbe = 0;
 
-    function probe(force) {
+    // passed: after a failed request — start with the host after the picked one (it may answer the light /configuration
+    // while real requests fail); the picked one is asked last
+    function probe(force, passed) {
         if (probing || (!force && Date.now() - lastProbe < 30000)) return;
         probing = true;
         lastProbe = Date.now();
-        var list = hosts();
+        var list = hosts(), at = list.indexOf(current);
+        if (passed && at >= 0) list = list.slice(at + 1).concat(list.slice(0, at + 1));
         (function next(i) {
             if (i >= list.length) { probing = false; return console.log('TmdbRoute', 'no host answers, keep', current); }
             $.ajax({
@@ -62,9 +68,7 @@
     Lampa.Listener.follow('request_error', function (e) {
         var url = e.params && e.params.url;
         if (typeof url !== 'string' || url.indexOf(current) !== 0 || (e.error && e.error.status)) return; // only network failures (status 0) of the picked host
-        var now = Date.now();
-        errors = errors.filter(function (t) { return now - t < 15000; }).concat(now);
-        if (errors.length >= 3) { errors = []; probe(true); }
+        probe(false, true);
     });
 
     // A CUB card's details come from CUB's own TMDB proxy (tmdb.<cub>/3/…) with CUB's extras (kinopoisk_id, KP/IMDb

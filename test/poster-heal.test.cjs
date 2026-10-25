@@ -1,45 +1,71 @@
 // node test/poster-heal.test.cjs
-// poster-heal failover: a host that keeps failing hands over to a host that can work on this line, never to
-// Cloudflare/OVH (Russian ISPs cut their answers at ~16 KB) — TV 2026-10-24: nl failed while a torrent filled the line,
-// the plugin went nl → pl → imagetmdb.com and every poster died.
+// poster-heal: each poster from one of the cacheable hosts (nl/de, by its path), every retry of it from the next host,
+// a failing host set aside — never Cloudflare/OVH/image.tmdb.org for a card (TV line: 10–11 s a poster / DNS 127.0.0.1).
 const fs = require('fs');
 const path = require('path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'poster-heal.js'), 'utf8');
 
-function load() {
+function load(dead) {
+  const checks = [];
   const logs = [];
   const Lampa = { Manifest: { cub_domain: 'cubnotrip.top' }, TMDB: { image: (u) => u, broken: () => {} } };
-  const window = { Lampa };
+  const window = { Lampa, addEventListener() {} };
   const document = { addEventListener() {}, querySelectorAll: () => [] };
-  function Image() {} // probes never finish: no race winner, the failover choice alone decides
+  // a host check: a dead host errors, a live one loads (synchronously; the plugin sets onload/onerror before src)
+  function Image() {}
+  Object.defineProperty(Image.prototype, 'src', { set(u) { if (!u) return; checks.push(u); const bad = (dead || []).some((h) => u.indexOf(h) === 0); this.naturalWidth = bad ? 0 : 92; bad ? this.onerror && this.onerror() : this.onload && this.onload(); }, get() { return ''; } });
   const noop = () => 0;
   new Function('window', 'Lampa', 'document', 'Image', 'location', 'console', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', src)(
-    Object.assign(window, { addEventListener() {} }), Lampa, document, Image, { protocol: 'http:' }, { log: (...a) => logs.push(a.join(' ')) },
-    noop, noop, noop, noop);
-  const host = () => Lampa.TMDB.image('t/p/w300/a.jpg').replace('t/p/w300/a.jpg', '');
-  const fail = () => { const h = host(); for (let i = 0; i < 8; i++) Lampa.TMDB.broken(h + 't/p/w300/x' + i + '.jpg'); return host(); };
-  return { host, fail, logs, Lampa };
+    window, Lampa, document, Image, { protocol: 'http:' }, { log: (...a) => logs.push(a.join(' ')) }, noop, noop, noop, noop);
+  const host = (p) => Lampa.TMDB.image(p).replace(p, '');
+  return { Lampa, host, logs, checks };
 }
 
 let failed = 0;
 function check(title, got, want) {
-  const ok = got === want;
+  const ok = JSON.stringify(got) === JSON.stringify(want);
   if (!ok) failed++;
-  console.log((ok ? 'ok   ' : 'FAIL ') + title + (ok ? '' : ` — got ${got}, want ${want}`));
+  console.log((ok ? 'ok   ' : 'FAIL ') + title + (ok ? '' : ` — got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`));
 }
 
-const bad = /\/\/(imagetmdb\.com|pl\.imagetmdb\.com|image\.tmdb\.org)\//;
-const p = load();
-check('starts on lampa.byskaz.ru', p.host(), 'http://lampa.byskaz.ru/tmdb/img/');
-const seen = [];
-for (let i = 0; i < 6; i++) seen.push(p.fail());
-check('failover never lands on Cloudflare/OVH/image.tmdb.org', seen.filter((h) => bad.test(h)).join(', '), '');
-check('byskaz failing → nl', seen[0], 'http://nl.imagetmdb.com/');
-check('nl failing → CUB images', seen[1], 'https://imagetmdb.cubnotrip.top/');
-check('CUB failing → back to byskaz', seen[2], 'http://lampa.byskaz.ru/tmdb/img/');
-check('a failing host is logged', p.logs.filter((l) => /host failing/.test(l)).length, 6);
-const s = load();
-const h0 = s.host();
-for (let i = 0; i < 7; i++) s.Lampa.TMDB.broken(h0 + 't/p/w300/y' + i + '.jpg');
-check('7 errors in 10 s are not enough to switch', s.host(), h0);
+const NL = 'http://nl.imagetmdb.com/', DE = 'http://de.imagetmdb.com/', BY = 'http://lampa.byskaz.ru/tmdb/img/', CUB = 'https://imagetmdb.cubnotrip.top/';
+const posters = Array.from({ length: 200 }, (_, i) => `t/p/w300/poster${i}.jpg`);
+let t = load();
+const first = posters.map((p) => t.host(p));
+check('every poster from nl or de (both cache for a year)', first.every((h) => h === NL || h === DE), true);
+const nl = first.filter((h) => h === NL).length;
+check('split about half and half', nl > 70 && nl < 130, true);
+check('the same poster always from the same host (cache hits)', posters.map((p) => t.host(p)), first);
+check('Lampa’s double slash normalised', t.Lampa.TMDB.image('t/p/w300//poster1.jpg'), first[1] + 't/p/w300/poster1.jpg');
+
+// one poster fails: each of Lampa's retries goes to the next host
+const p = posters[0], order = [t.host(p)];
+for (let i = 0; i < 4; i++) { t.Lampa.TMDB.broken(order[order.length - 1] + p); order.push(t.host(p)); }
+const other = order[0] === NL ? DE : NL;
+check('retries: the other cacheable host, byskaz, CUB, then round again', order, [order[0], other, BY, CUB, order[0]]);
+check('other posters keep their host', posters.slice(1, 50).map((x) => t.host(x)), first.slice(1, 50));
+check('never Cloudflare/OVH/image.tmdb.org for a card', order.concat(first).some((h) => /pl\.imagetmdb|\/\/imagetmdb\.com|image\.tmdb\.org/.test(h)), false);
+
+// back from the player: Lampa's 15-s timer fails a whole screen at once, nl and de are fine → nothing set aside
+t = load([]);
+const screen = posters.slice(0, 20);
+screen.forEach((x) => t.Lampa.TMDB.broken(t.host(x) + x));
+check('burst of timeouts with live hosts: nl and de stay in', posters.slice(100, 140).every((x) => [NL, DE].includes(t.host(x))), true);
+// nl really dead: 8 errors → checked → set aside, its posters go to de
+t = load([NL]);
+const onNl = posters.filter((x) => t.host(x) === NL);
+for (let i = 0; i < 8; i++) t.Lampa.TMDB.broken(NL + onNl[i]);
+check('nl dead → set aside, its untouched posters from de', onNl.slice(10, 30).map((x) => t.host(x)).every((h) => h === DE), true);
+check('logged', t.logs.some((l) => /set aside/.test(l)), true);
+t = load([]);
+const atStart = t.checks.length;
+for (let i = 0; i < 7; i++) t.Lampa.TMDB.broken(NL + onNl[i]);
+check('7 errors in 10 s: no check yet; the 8th checks nl', [t.checks.length - atStart, (t.Lampa.TMDB.broken(NL + onNl[7]), t.checks.length - atStart)], [0, 1]);
+// a retry never goes to the host that just failed, even when that failure set it aside
+t = load([BY]);
+const q = posters[3], seen = [t.host(q)];
+for (let i = 0; i < 2; i++) { t.Lampa.TMDB.broken(seen[seen.length - 1] + q); seen.push(t.host(q)); }
+for (let i = 0; i < 8; i++) t.Lampa.TMDB.broken(BY + posters[150 + i]);
+t.Lampa.TMDB.broken(seen[seen.length - 1] + q); seen.push(t.host(q));
+check('no host twice in a row for one poster', seen.every((h, i) => i === 0 || h !== seen[i - 1]), true);
 process.exitCode = failed ? 1 : 0;
