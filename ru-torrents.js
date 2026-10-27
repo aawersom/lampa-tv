@@ -15,13 +15,16 @@
  *    files at once (see warmUp).
  * 6) The filter menu is worked out here and handed to Lampa in a few stand-in releases — no freeze on a long list (see filterMenu).
  * 7) «Продолжить» on the card of a film/series opened before: plays the release used last at once (quick-start picks the file).
+ * 8) Card buttons: «Смотреть» → «Торренты», «Онлайн» button, no subscribe bell.
+ * 9) Filter: Качество, then Сезон — in the menu and in the chosen values next to «Фильтр».
+ * 10) Episode list: «S01/101 Name.mkv» (season folder, episode ×100) read as S1E1; names without TMDB are clean and alike.
  * Patched: Parser.get callback (merge + rank) and the torrents component's sortWithViewed, which Lampa
  * calls after every sort (components/torrents.js sortResults). Already-opened releases stay pinned on top.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.15.0';
+    window.lampa_tv_ru_torrents = '1.16.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -298,9 +301,120 @@
                 return it.btn && it.btn.hasClass && it.btn.hasClass('view--torrent');
             })[0];
             if (torrents) return torrents.btn.trigger('hover:enter');
+            filterOrder(params && params.items);
         } catch (err) { console.log('RuTorrents', 'play menu', err && err.message); }
         return showSelect.apply(this, arguments);
     };
+
+    // 9) Filter order (owner, 2026-10-26: «сначала качество, потом сезон»). Lampa's «Торренты» filter menu goes Качество,
+    //    HDR, Dolby Vision, Субтитры, Перевод, Язык, Сезон…, and the chosen values next to «Фильтр» follow the order they
+    //    were picked in, cut at 25 characters (Filter.chosen) — «Сезон:2, Качество:1080p» hid the quality. Both now go
+    //    Качество, Сезон, then the rest in Lampa's order.
+    var FILTER_ORDER = ['quality', 'season', 'hdr', 'dv', 'sub', 'voice', 'lang', 'tracker', 'year', '_3d'];
+    function filterOrder(items) { // the menu: Lampa's items carry `stype`; the season one moves right after quality
+        if (!Array.isArray(items)) return;
+        var q = -1, s = -1;
+        items.forEach(function (it, i) { if (it && it.stype === 'quality') q = i; if (it && it.stype === 'season') s = i; });
+        if (q < 0 || s < 0 || s === q + 1) return;
+        var season = items.splice(s, 1)[0];
+        items.splice((q < s ? q : q - 1) + 1, 0, season);
+    }
+    function orderedFilter(need) { // the chosen values: Lampa lists them in key order
+        var out = {};
+        FILTER_ORDER.forEach(function (k) { if (k in need) out[k] = need[k]; });
+        Object.keys(need).forEach(function (k) { if (!(k in out)) out[k] = need[k]; });
+        return out;
+    }
+
+    // 10) Episode list (owner, 2026-10-26: «списки серий понятными названиями, однотипными для всех трекеров»). Lampa reads
+    //     the season/episode from the file name (core EpisodeParser) and, when TMDB has that episode, shows its name; else
+    //     the raw path. Two fixes:
+    //  a) «Во все тяжкие» BD: «S01/101 Pilot -- Пилот.mkv» — season in the folder, episode as season×100+episode. Lampa
+    //     took episode 101: no TMDB name, wrong number. When every video file of a season folder is S01..S99 that way,
+    //     the episode is the last two digits. Watch marks Lampa kept under the old number move to the new one (with
+    //     their own time: «Продолжить» picks the episode by the newest mark).
+    //  b) No TMDB name: instead of the path, a clean name from the file (in Russian if the file has it) or «Серия N»;
+    //     other files (extras) — the file name without folders, dots and release tags.
+    function folderSeason(folder) {
+        var m = /\bs(\d{1,2})\b|season\s*(\d{1,2})|сезон\s*(\d{1,2})|(\d{1,2})\s*(?:season|сезон)/i.exec(String(folder || '').replace(/_/g, ' '));
+        return m ? parseInt(m[1] || m[2] || m[3] || m[4], 10) : 0;
+    }
+    function leading(name) { var m = /^(\d{3,4})\b/.exec(String(name || '').replace(/_/g, ' ').trim()); return m ? parseInt(m[1], 10) : 0; }
+    function packedEpisode(path, files) { // 'Show/S01/101 Pilot.mkv' → 1 when all video files of S01 are 101..199
+        var parts = String(path || '').split('/'), name = parts.pop(), folder = parts.join('/'), season = folderSeason(parts[parts.length - 1]);
+        var n = leading(name);
+        if (!season || !n || Math.floor(n / 100) !== season || n % 100 < 1) return 0;
+        var sibs = (files || []).filter(function (f) {
+            var p = String(f.path || '').split('/');
+            p.pop();
+            return p.join('/') === folder && /\.(mkv|mp4|avi|m4v|ts|m2ts|mov|wmv|webm)$/i.test(f.path || '');
+        });
+        var ok = sibs.length > 0 && sibs.every(function (f) {
+            var k = leading(String(f.path).split('/').pop());
+            return Math.floor(k / 100) === season && k % 100 >= 1;
+        });
+        return ok ? n % 100 : 0;
+    }
+    var TAGS = /\b(2160p|1080p|1080i|720p|576p|480p|4k|uhd|hdr10?\+?|dv|sdr|web-?dl|web-?rip|webrip|bdrip|bd-?remux|remux|blu-?ray|bluray|hdtv|hdrip|dvdrip|x26[45]|h\.?26[45]|hevc|avc|aac|ac-?3|e-?ac-?3|dd\+?p?\s?[0-9.]*|dts(-hd)?|truehd|atmos|amzn|nf|hmax|atvp|dsnp|kp|ivi|okko|rus|eng|ukr|sub|subs|proper|repack|lostfilm|newstudio|hdrezka|coldfilm|kerob|alexfilm|baibako)\b.*$/i;
+    function cleanName(path, episode) {
+        var base = String(path || '').split('/').pop().replace(/\.[a-z0-9]{2,4}$/i, '');
+        if (base.indexOf(' ') < 0 && /[._]/.test(base)) base = base.replace(/[._]+/g, ' ');
+        base = base.replace(/_/g, ' ');
+        var halves = base.split(/\s*--\s*|\s+[—|]\s+/); // «Pilot -- Пилот», «Nothin'-- Блеф»
+        if (halves.length > 1) base = halves.filter(function (h) { return /[а-яё]/i.test(h); })[0] || halves[halves.length - 1];
+        base = base.replace(/^.*?\bs\d{1,2}\s?e\d{1,3}\b/i, '').replace(/^.*?\b\d{1,2}x\d{1,3}\b/i, '');
+        // a leading number is the episode's only in an episode's name («1917.2019.BDRip» is a film)
+        if (episode) base = base.replace(/^\s*(?:серия|episode|ep\.?|e)?\s*\d{1,4}\s*(?:серия)?[\s.:)\-–—]*/i, '');
+        base = base.replace(TAGS, '')
+            .replace(/[\[\](){}]+/g, ' ').replace(/\s+/g, ' ').replace(/^[\s\-–—.:]+|[\s\-–—.:]+$/g, '');
+        if (episode) return /[а-яё]/i.test(base) ? base : 'Серия ' + episode;
+        return base || String(path || '').split('/').pop();
+    }
+
+    var torserver = Lampa.Torserver;
+    if (torserver && typeof torserver.parse === 'function' && !torserver.parse.__ruTorrents) {
+        var parseFile = torserver.parse;
+        torserver.parse = function (data) {
+            var res = parseFile.apply(this, arguments);
+            try {
+                var ep = data && !data.is_file ? packedEpisode(data.path, data.files) : 0;
+                if (ep && res.episode !== ep) {
+                    var old = res.hash;
+                    res.episode = ep;
+                    if (res.by_title) {
+                        res.hash_string = [res.season, res.season > 10 ? ':' : '', res.episode, data.movie.original_title].join('');
+                        res.hash = Lampa.Utils.hash(res.hash_string);
+                        // moved when the old mark is newer than the new number's (a «Сбросить тайм-код» there is newer and
+                        // stays), or the new number has none at all; under Lampa's card key, so the card's episode list sees it
+                        var was = Lampa.Timeline.view(old) || {}, now = Lampa.Timeline.view(res.hash) || {};
+                        if (was.percent > 0 && ((was.updated || 0) > (now.updated || 0) || (!now.updated && !now.percent))) {
+                            Lampa.Timeline.update(Object.assign({ hash: res.hash, percent: was.percent, time: was.time, duration: was.duration,
+                                profile: was.profile, updated: was.updated, received: true }, Lampa.Timeline.link(data.movie, res.season, res.episode) || {}));
+                        }
+                    }
+                }
+            } catch (err) { console.log('RuTorrents', 'episode parse', err && err.message); }
+            return res;
+        };
+        torserver.parse.__ruTorrents = true;
+    }
+
+    var template = Lampa.Template;
+    if (template && typeof template.get === 'function' && !template.get.__ruTorrents) {
+        var getTemplate = template.get;
+        template.get = function (name, vars) {
+            try {
+                if (vars && vars.path && vars.path_human && (name === 'torrent_file_serial' || name === 'torrent_file')) {
+                    var raw = vars.path_human;
+                    // Lampa: TMDB's name when it has one, else «N / path» — only the latter is replaced
+                    if (name === 'torrent_file_serial' && vars.episode && String(vars.fname || '').slice(-raw.length) === raw) vars.fname = cleanName(vars.path, vars.episode);
+                    if (name === 'torrent_file' && vars.title === raw) vars.title = cleanName(vars.path, 0);
+                }
+            } catch (err) { console.log('RuTorrents', 'file name', err && err.message); }
+            return getTemplate.apply(this, arguments);
+        };
+        template.get.__ruTorrents = true;
+    }
 
     // 6) Filter menu without the freeze. Lampa builds it (components/torrents.js buildFilterd) by checking every release
     //    against each of its 911 voice names: Game of Thrones, 880 releases → 997 ms of frozen screen on the TV
@@ -448,7 +562,7 @@
                 // a film without its own filter starts unfiltered (Lampa falls back to the last filter used anywhere)
                 this.getFilterData = function () {
                     var all = Lampa.Storage.get('torrents_filter_data', '{}') || {};
-                    return all[this.cardID()] || {};
+                    return orderedFilter(all[this.cardID()] || {});
                 };
                 var buildFilterd = this.buildFilterd;
                 if (typeof buildFilterd === 'function') this.buildFilterd = function () {
