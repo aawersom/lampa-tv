@@ -12,11 +12,14 @@
  *    from MX's own memory of the place. No record of the start in that release: the latest file TorrServer streamed.
  * 4) Lampa's video screensaver releases the hardware video decoder when it closes (it kept it, see below).
  * 5) «История» is the bookmark list again (Lampa 3.4 with CUB sync made it a screen of panels): OK opens the card.
+ * 6) MX shows «Сезон 1 Серия 2: Название» for an episode. The core hands the external player only the episode's
+ *    name (title = fname), so MX never said which season/episode plays. Every playlist entry is labelled too,
+ *    so the title stays right when MX moves to the next file on its own.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.7.0';
+    window.lampa_tv_quick_start = '1.8.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -171,6 +174,29 @@
     if (Lampa.Favorite && typeof Lampa.Favorite.historyActivity === 'function') {
         Lampa.Favorite.historyActivity = function () {
             return { component: 'favorite', type: 'history', title: Lampa.Lang.translate('title_history') };
+        };
+    }
+
+    // ---- 6) MX: «Сезон 1 Серия 2: Название» ----
+    // Torrent elements carry .season/.episode (core Arrays.extend in the file list); online_mod writes season and
+    // episode into the title itself («S1 / Серия 2 - Название») and sends no .episode — such titles pass unchanged.
+    function mxTitle(el) {
+        if (!el || !el.episode) return;
+        var name = String(el.title || '').trim();
+        if (/сезон\s*\d|\d+\s*сезон|серия\s*\d|\d+\s*серия|s\d{1,2}\s*e\d/i.test(name)) {
+            if (!/^серия\s*\d{1,4}$/i.test(name)) return; // the numbers are already there (online_mod, a replay)
+            name = ''; // the bare «Серия N» placeholder would repeat the label
+        }
+        el.title = (el.season ? 'Сезон ' + el.season + ' ' : '') + 'Серия ' + el.episode + (name ? ': ' + name : '');
+    }
+
+    if (Lampa.Android && Lampa.Android.openPlayer) {
+        var toPlayer = Lampa.Android.openPlayer;
+        Lampa.Android.openPlayer = function (link, data) {
+            try {
+                if (data) { mxTitle(data); (data.playlist || []).forEach(mxTitle); }
+            } catch (err) { console.log('QuickStart', 'mx title', err && err.message); }
+            return toPlayer.apply(this, arguments);
         };
     }
 
