@@ -24,7 +24,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.16.0';
+    window.lampa_tv_ru_torrents = '1.17.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -154,8 +154,9 @@
     //    soon as the card's parser answer is in, and kept alive with a status request every 15 s (TorrServer drops a
     //    torrent nobody reads after 30 s) until the card closes, another release is pressed, the player starts or
     //    WARM_MAX passes. With «Сохранять в базу» on, TorrServer keeps the description and a warm-up takes 2–3 s.
-    //    «Opened before» = the release whose files were opened last for this card (see 7); without that record, the one
-    //    Lampa marked last (torrents_view: order of the FIRST press, so going back to an older release isn't seen there).
+    //    «Opened before» = the card's release TorrServer opened last — the one «Продолжить» opens (see 7); a card with
+    //    nothing in TorrServer: the release whose files were opened last (record of 7) among the parser's answer, else the
+    //    one Lampa marked last (torrents_view: order of the FIRST press, so going back to an older release isn't seen there).
     var WARM_MAX = 20 * 60 * 1000;
     var warm = null;
 
@@ -167,34 +168,48 @@
         stopWarm();
         var server = Lampa.Torserver && Lampa.Torserver.url && Lampa.Torserver.url();
         if (!server || !json || !json.Results) return;
-        var last = lastOpened(card), view = Lampa.Storage.get('torrents_view', '[]') || [];
-        var best = null, pos = -1;
-        json.Results.forEach(function (r) {
-            if (!(r.MagnetUri || r.Link)) return;
-            var i = last && btih(r) === last ? Infinity : r.viewed ? view.indexOf(r.hash) : -1;
-            if (i > pos) { pos = i; best = r; }
-        });
-        if (!best) return;
+        var w = warm = { id: card.id, title: '', hash: '', started: Date.now() };
         var net = new Lampa.Reguest(); // own request object: Lampa.Torserver's calls clear each other
         net.timeout(15000);
         var send = function (body, ok) { net.silent(server + '/torrents', ok || function () {}, function () {}, JSON.stringify(body)); };
-        var w = warm = { id: card.id, title: best.Title, hash: '', started: Date.now() };
-        // the body Lampa sends when the release is pressed (core Torserver.hash), so TorrServer keeps one and the same entry
-        send({
-            action: 'add', link: best.MagnetUri || best.Link, title: '[LAMPA] ' + (best.title || best.Title), poster: card.img || '',
-            data: JSON.stringify({ lampa: true, movie: Lampa.Utils.clearCard ? Lampa.Utils.clearCard(card) : card }),
-            save_to_db: Lampa.Storage.get('torrserver_savedb', 'false'), category: card.name ? 'tv' : 'movie'
-        }, function (j) { if (j && j.hash) w.hash = j.hash; });
-        w.timer = setInterval(function () {
-            if (warm !== w || Date.now() - w.started > WARM_MAX) return stopWarm();
-            if (w.hash) send({ action: 'get', hash: w.hash });
-        }, 15000);
+        var keep = function () {
+            w.timer = setInterval(function () {
+                if (warm !== w || Date.now() - w.started > WARM_MAX) return stopWarm();
+                if (w.hash) send({ action: 'get', hash: w.hash });
+            }, 15000);
+        };
+        // the card has releases in TorrServer: the one «Продолжить» opens (7) — warming another would make it the newest
+        continueRelease(card, function (hash, t) {
+            if (warm !== w) return;
+            w.hash = hash;
+            w.title = String(t.title || '').replace(/^\[LAMPA\]\s*/, '');
+            send({ action: 'get', hash: hash });
+            keep();
+        }, function () {
+            if (warm !== w) return;
+            var last = lastOpened(card), view = Lampa.Storage.get('torrents_view', '[]') || [];
+            var best = null, pos = -1;
+            json.Results.forEach(function (r) {
+                if (!(r.MagnetUri || r.Link)) return;
+                var i = last && btih(r) === last ? Infinity : r.viewed ? view.indexOf(r.hash) : -1;
+                if (i > pos) { pos = i; best = r; }
+            });
+            if (!best) return stopWarm();
+            w.title = best.Title;
+            // the body Lampa sends when the release is pressed (core Torserver.hash), so TorrServer keeps one and the same entry
+            send({
+                action: 'add', link: best.MagnetUri || best.Link, title: '[LAMPA] ' + (best.title || best.Title), poster: card.img || '',
+                data: JSON.stringify({ lampa: true, movie: Lampa.Utils.clearCard ? Lampa.Utils.clearCard(card) : card }),
+                save_to_db: Lampa.Storage.get('torrserver_savedb', 'false'), category: card.name ? 'tv' : 'movie'
+            }, function (j) { if (j && j.hash) w.hash = j.hash; });
+            keep();
+        });
     }
 
     // 7) «Продолжить». The release whose files were opened last for a card — by any path: a release pressed in
     //    «Торренты», «Мои торренты», this button — is remembered (torrent hash per card, the last 300 cards). A card with a
     //    release of its own in TorrServer (data.movie; kept across restarts with «Сохранять в базу») gets «Продолжить» next
-    //    to «Смотреть»: the remembered release (else the newest one in TorrServer) opened the way «Мои торренты» opens it, and
+    //    to «Смотреть»: the release TorrServer opened last for it, opened the way «Мои торренты» opens it, and
     //    marked to play at once: quick-start starts the episode to watch, or the film's file played last (also remembered).
     var LAST_KEY = 'lampa_tv_last_release', LAST_MAX = 300;
     var CONTINUE_ICON = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M4 4.5v15L15 12z" fill="currentColor"/><rect x="16.5" y="4.5" width="3.5" height="15" rx="1" fill="currentColor"/></svg>';
@@ -221,23 +236,28 @@
         Lampa.Storage.set(LAST_KEY, all);
     }
 
-    function continueRelease(card, done) {
+    // The release to continue = the card's release TorrServer opened last (its `timestamp` moves whenever a list of it is
+    // opened or a file of it played — by any path). Not the record above: it lives in Lampa's localStorage and was found
+    // pointing elsewhere, and the warm-up (5) took a release by it and by Lampa's marks of FIRST presses — adding that one
+    // to TorrServer made it the newest there a second before this button asked (TV 2026-10-28 20:27: the card opened, the
+    // warm-up added an old .avi release, «Продолжить» played its S2E1 instead of the BD release watched the night before).
+    // The warm-up now warms this very release; the record only says which file of it was started last, and when.
+    function continueRelease(card, done, none) {
         var url = Lampa.Torserver && Lampa.Torserver.url && Lampa.Torserver.url();
-        if (!url || !card || !card.id) return;
+        if (!url || !card || !card.id) return none && none();
         var net = new Lampa.Reguest();
         net.timeout(5000);
         net.silent(url.replace(/\/$/, '') + '/torrents', function (list) {
-            var last = lastOpened(card), newest = null, remembered = null;
+            var newest = null;
             (Array.isArray(list) ? list : []).forEach(function (t) {
                 var m = null;
                 try { m = (typeof t.data === 'string' ? JSON.parse(t.data || '{}') : t.data || {}).movie; } catch (err) { /* not Lampa's */ }
                 if (!m || m.id != card.id || !!m.name !== !!card.name) return;
-                if (String(t.hash).toLowerCase() === last) remembered = t;
                 if (!newest || t.timestamp > newest.timestamp) newest = t;
             });
-            var t = remembered || newest;
-            if (t) done(t.hash);
-        }, function () {}, JSON.stringify({ action: 'list' }));
+            if (newest) done(String(newest.hash).toLowerCase(), newest);
+            else if (none) none();
+        }, function () { if (none) none(); }, JSON.stringify({ action: 'list' }));
     }
 
     function addContinue(e) {
@@ -252,19 +272,24 @@
                 // file/at = the file started last from Lampa and when; `opened` = files TorrServer streamed since then.
                 // Lampa learns a position only when MX is left with «Назад» — a session ended by switching the TV off /
                 // «Домой» / the screensaver leaves no marks (owner 2026-10-23: marks stopped at S2E4, MX was on S2E6)
+                // The release is chosen again now: a release opened from «Торренты» since the card was built is the one.
                 var movie = Object.assign({}, card), last = lastRecord(card), sent = false;
-                var go = function (opened) {
-                    if (sent) return;
-                    sent = true;
-                    var same = last.hash === String(hash).toLowerCase();
-                    Object.defineProperty(movie, 'lampa_tv_play', { value: { file: same ? last.file : undefined, at: same ? last.at : undefined, opened: opened || [] } });
-                    Lampa.Torrent.open(hash, movie);
+                var start = function (h) {
+                    var go = function (opened) {
+                        if (sent) return;
+                        sent = true;
+                        var same = last.hash === h;
+                        console.log('RuTorrents', 'continue', card.id, h.slice(0, 8), same ? 'file ' + last.file + ' at ' + new Date(last.at || 0).toISOString() : 'no record of it (record: ' + String(last.hash || '-').slice(0, 8) + ')', 'streamed', (opened || []).join(','));
+                        Object.defineProperty(movie, 'lampa_tv_play', { value: { file: same ? last.file : undefined, at: same ? last.at : undefined, opened: opened || [] } });
+                        Lampa.Torrent.open(h, movie);
+                    };
+                    var net = new Lampa.Reguest();
+                    net.timeout(3000);
+                    net.silent(Lampa.Torserver.url().replace(/\/$/, '') + '/viewed', function (list) {
+                        go((Array.isArray(list) ? list : []).map(function (v) { return v.file_index; }));
+                    }, function () { go([]); }, JSON.stringify({ action: 'list', hash: h }));
                 };
-                var net = new Lampa.Reguest();
-                net.timeout(3000);
-                net.silent(Lampa.Torserver.url().replace(/\/$/, '') + '/viewed', function (list) {
-                    go((Array.isArray(list) ? list : []).map(function (v) { return v.file_index; }));
-                }, function () { go([]); }, JSON.stringify({ action: 'list', hash: hash }));
+                continueRelease(card, start, function () { start(hash); });
             });
             play.after(btn);
             // the card's buttons are collected when it gets the focus; this one comes later

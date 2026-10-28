@@ -38,7 +38,13 @@ check('left with «Назад» on E7 after starting it → Lampa mark wins', ma
 check('phantom 100 % on an episode not played this session is ignored', [ep('E1', 100, 100), ep('E2', 3, 610), ep('E6', 100, 610), ep('E7', 0, 0)], cont('E2', 500, ['E2']), 'E2', 'E2');
 check('played E2 to the end, MX went on to E3 (both streamed), «Назад» on E3 → E3', [ep('E2', 100, 610), ep('E3', 20, 610), ep('E4', 0, 0)], cont('E2', 500, ['E2', 'E3']), 'E3', 'E3');
 check('played E2 to the end, «Назад» right at its end → E3', [ep('E2', 98, 610), ep('E3', 0, 0)], cont('E2', 500, ['E2']), 'E3', 'E3');
-check('no start record (old version) → Lampa marks', many(), Object.defineProperty(Object.assign({}, series), 'lampa_tv_play', { value: {} }), 'E7', 'E7');
+// no start record of this release (lost, or the record names another release), TorrServer streamed files known
+const fresh = (opened) => Object.defineProperty(Object.assign({}, series), 'lampa_tv_play', { value: { opened } });
+// TV 2026-10-28: «Во все тяжкие» — S2E1 marked 38 % days ago, the night session went S2E1→S2E3 in MX, TV off
+check('no record, streamed E1..E3, old mark on E1 → E3 (the latest streamed)', [ep('E1', 38, 100), ep('E2', 0, 0), ep('E3', 0, 0), ep('E4', 0, 0)], fresh(['E1', 'E2', 'E3']), 'E3', 'E3');
+check('no record, latest streamed seen finished by Lampa → the next one', [ep('E1', 100, 100), ep('E2', 95, 700), ep('E3', 0, 0)], fresh(['E1', 'E2']), 'E3', 'E3');
+check('no record, nothing streamed → Lampa marks as before', many(), fresh([]), 'E7', 'E7');
+check('no start record (old version) → Lampa marks', many(),Object.defineProperty(Object.assign({}, series), 'lampa_tv_play', { value: {} }), 'E7', 'E7');
 check('watched last E04 finished → E05', [ep('E01', 4, 100), ep('E04', 95, 300), ep('E05', 0, 0)], series, 'E05', null);
 check('last episode finished → nothing to play', [ep('E01', 100, 100), ep('E02', 100, 200)], Object.defineProperty(Object.assign({}, series), 'lampa_tv_play', { value: {} }), null, null);
 check('nothing watched → first episode', [ep('E01', 0, 0), ep('E02', 0, 0)], series, 'E01', null);

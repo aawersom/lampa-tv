@@ -9,13 +9,14 @@
  * 3) A list opened by «Продолжить» (ru-torrents, marked lampa_tv_play) plays at once: the episode chosen as in 1), or the film
  *    file played last; nothing to choose (all watched, several equal files never played) → the list stays. A session that
  *    ended without «Назад» in MX left Lampa no marks: then the episode started last (or the one MX went on to) plays,
- *    from MX's own memory of the place.
+ *    from MX's own memory of the place. No record of the start in that release: the latest file TorrServer streamed.
  * 4) Lampa's video screensaver releases the hardware video decoder when it closes (it kept it, see below).
+ * 5) «История» is the bookmark list again (Lampa 3.4 with CUB sync made it a screen of panels): OK opens the card.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.6.1';
+    window.lampa_tv_quick_start = '1.7.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -63,8 +64,20 @@
         //  · no such mark (TV off, «Домой», screensaver — Lampa never heard back): the started episode, or a later one MX went
         //    on to; its old Lampa mark is cleared so MX resumes from its own memory of the exact place.
         var started = play && play.at ? list.filter(function (r) { return r.element.id === play.file; })[0] : null;
+        var opened = play && play.opened || [];
+        if (!started && play && opened.length) {
+            // no record of the start in THIS release (the record was lost, or points to another release — TV 2026-10-28):
+            // the files TorrServer streamed since the last start from Lampa still tell where the viewer was — the latest
+            // of them, or the next one if Lampa saw it finished. Marks of the other episodes can be older than that session.
+            var latest = null;
+            list.forEach(function (r) { if (opened.indexOf(r.element.id) >= 0) latest = r; });
+            if (latest) {
+                target = percent(latest.element) >= 90 ? list[list.indexOf(latest) + 1] || null : latest;
+                if (target === latest) fromMx(latest);
+            }
+        }
         if (started) {
-            var opened = play.opened || [], from = list.indexOf(started), fresh = null;
+            var from = list.indexOf(started), fresh = null;
             var played = list.filter(function (r) { return r === started || opened.indexOf(r.element.id) >= 0; });
             played.forEach(function (r) {
                 var t = r.element.timeline;
@@ -74,14 +87,21 @@
             else {
                 target = started;
                 played.forEach(function (r) { if (list.indexOf(r) > from) target = r; });
-                var tl = target.element.timeline;
-                if (tl && tl.time && Lampa.Timeline && Lampa.Timeline.update) {
-                    Lampa.Timeline.update({ hash: tl.hash, percent: tl.percent, time: 0, duration: tl.duration, profile: tl.profile });
-                }
+                fromMx(target);
             }
         }
+        if (play) console.log('QuickStart', 'continue →', target ? 'S' + (target.element.season || '-') + 'E' + (target.element.episode || '-') + ' file ' + target.element.id : 'nothing to play', started ? 'started ' + play.file : 'no start record', 'streamed', opened.join(','));
         if (target && Lampa.Modal && Lampa.Modal.scroll) Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
         if (target && play) target.item.trigger('hover:enter');
+    }
+
+    // Lampa never heard where MX stopped: its old mark's time is cleared, so the app hands MX no position and MX resumes
+    // from its own memory of this very file (it keeps one per address — the same release and file give the same address)
+    function fromMx(r) {
+        var tl = r && r.element.timeline;
+        if (tl && tl.time && Lampa.Timeline && Lampa.Timeline.update) {
+            Lampa.Timeline.update({ hash: tl.hash, percent: tl.percent, time: 0, duration: tl.duration, profile: tl.profile });
+        }
     }
 
     Lampa.Listener.follow('torrent_file', function (e) {
@@ -142,6 +162,16 @@
                 try { v.pause(); v.removeAttribute('src'); v.load(); } catch (err) { /* already gone */ }
             });
         });
+    }
+
+    // ---- 5) «История» opens cards, as before Lampa 3.4 ----
+    // With CUB sync Lampa 3.4 shows «История» as a new screen (watch_history): OK on a card opens a panel (progress, seasons,
+    // days) instead of the card (owner, 2026-10-28: «как и раньше просто переходить в карточку»). Both ways in — the menu
+    // and the remote's colour key — ask Favorite.historyActivity(); the old screen is the bookmark list «history».
+    if (Lampa.Favorite && typeof Lampa.Favorite.historyActivity === 'function') {
+        Lampa.Favorite.historyActivity = function () {
+            return { component: 'favorite', type: 'history', title: Lampa.Lang.translate('title_history') };
+        };
     }
 
     console.log('QuickStart', 'ready', window.lampa_tv_quick_start);
