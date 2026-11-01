@@ -18,13 +18,14 @@
  * 8) Card buttons: «Смотреть» → «Торренты», «Онлайн» button, no subscribe bell.
  * 9) Filter: Качество, then Сезон — in the menu and in the chosen values next to «Фильтр».
  * 10) Episode list: «S01/101 Name.mkv» (season folder, episode ×100) read as S1E1; names without TMDB are clean and alike.
+ * 11) A series' releases show their bitrate: size / running time of the episodes they hold (Lampa shows it only for films).
  * Patched: Parser.get callback (merge + rank) and the torrents component's sortWithViewed, which Lampa
  * calls after every sort (components/torrents.js sortResults). Already-opened releases stay pinned on top.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.17.0';
+    window.lampa_tv_ru_torrents = '1.18.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -396,6 +397,62 @@
         return base || String(path || '').split('/').pop();
     }
 
+    // 11) Bitrate of a series' release (owner, 2026-11-01: «пропала скорость, которая требуется для воспроизведения»).
+    //     Lampa shows it only when the card has `runtime`; TMDB gives that to films, not to series, and Lampa would divide
+    //     a whole pack by one episode anyway. Here: release size / running time of the episodes the release holds — by the
+    //     title, the times from TMDB's seasons (the requests the file list makes too, cached). Not known → no line. The
+    //     card stays without `runtime`: the file list would take it for every episode's duration.
+    function releaseEpisodes(title) { // how many episodes the title says the release holds, 0 = it does not say
+        var t = String(title || ''), m;
+        if ((m = /s\d{1,2}\s?e(\d{1,3})\s*[-–]\s*e?(\d{1,3})/i.exec(t) || /\d{1,2}x(\d{1,3})\s*[-–]\s*(\d{1,3})/i.exec(t) ||
+            /(?:сери[яйи]|эпизод\w*|episodes?)\s*:?\s*(\d{1,4})\s*[-–]\s*(\d{1,4})/i.exec(t) ||
+            /(\d{1,4})\s*[-–]\s*(\d{1,4})\s*(?:сери|эпизод|episode|из\s*\d)/i.exec(t))) return Math.max(0, parseInt(m[2], 10) - parseInt(m[1], 10) + 1);
+        if ((m = /(\d{1,4})\s*[-–]\s*из\s*(\d{1,4})/i.exec(t))) return parseInt(m[2], 10); // «[1- из 10]»
+        if ((m = /[\[(]\s*(\d{1,4})\s*из\s*\d/i.exec(t))) return parseInt(m[1], 10); // «[12 из 12]»
+        return /s\d{1,2}\s?e\d{1,3}|\b\d{1,2}x\d{1,3}\b|\b\d{1,4}\s*(?:серия|эпизод)|(?:серия|эпизод|episode)\s*\d/i.test(t) ? 1 : 0;
+    }
+    function releaseMinutes(title, seasons, data) { // seasons: Lampa's reading of the title; data: Api.seasons' answer
+        var known = [], whole = true;
+        (seasons || []).forEach(function (s) {
+            var eps = data && data[s] && data[s].episodes;
+            if (!eps) whole = false;
+            (eps || []).forEach(function (e) { if (e.runtime > 0) known.push(e.runtime); });
+        });
+        if (!whole || !known.length) return 0;
+        var sum = known.reduce(function (a, b) { return a + b; }, 0), n = releaseEpisodes(title);
+        if (n) return n * sum / known.length;
+        // no season in the title: Lampa assumes the first — a whole-series pack would look like one huge season
+        return /сезон|season|\bs\d{1,2}\b/i.test(title) ? sum : 0;
+    }
+    var BITRATE_MAX = 150; // Mbit/s: above any real video — the title was misread
+    var seasonTimes = {};
+    function withSeasonTimes(movie, done) {
+        var s = seasonTimes;
+        if (s.id === movie.id && s.data) return done(s.data);
+        if (s.id === movie.id && Date.now() - s.at < 30000) return s.wait.push(done);
+        var list = [];
+        for (var i = 1; i <= movie.number_of_seasons; i++) list.push(i);
+        s = seasonTimes = { id: movie.id, at: Date.now(), wait: [done], data: null };
+        Lampa.Api.seasons(movie, list, function (data) {
+            s.data = data;
+            s.wait.splice(0).forEach(function (f) { f(data); });
+        });
+    }
+    function addBitrate(e) {
+        if (e.type !== 'render' || !e.element || !e.item) return;
+        var movie = (Lampa.Activity.active() || {}).movie, el = e.element, item = e.item;
+        if (!movie || !movie.number_of_seasons || movie.runtime || !el.general || !el.Size) return;
+        try {
+            withSeasonTimes(movie, function (data) {
+                var minutes = releaseMinutes(el.Title, el.general.seasons, data);
+                var rate = minutes ? Lampa.Utils.calcBitrate(el.Size, minutes) : 0;
+                if (!rate || rate > BITRATE_MAX || item.find('.bitrate').length) return;
+                item.find('.torrent-item__seeds').before('<div class="torrent-item__bitrate bitrate">' + Lampa.Lang.translate('torrent_item_bitrate') +
+                    ': <span>' + rate + ' ' + Lampa.Lang.translate('torrent_item_mb') + '</span></div>');
+            });
+        } catch (err) { console.log('RuTorrents', 'bitrate', err && err.message); }
+    }
+
     var torserver = Lampa.Torserver;
     if (torserver && typeof torserver.parse === 'function' && !torserver.parse.__ruTorrents) {
         var parseFile = torserver.parse;
@@ -574,6 +631,7 @@
             }
         });
         Lampa.Listener.follow('full', addContinue);
+        Lampa.Listener.follow('torrent', addBitrate);
         Lampa.Listener.follow('full', cardButtons);
         wrapped.__ruTorrents = true;
         Lampa.Parser.get = wrapped;
