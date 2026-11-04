@@ -9,7 +9,7 @@
  * 3) A list opened by «Продолжить» (ru-torrents, marked lampa_tv_play) plays at once: the episode chosen as in 1), or the film
  *    file played last; nothing to choose (all watched, several equal files never played) → the list stays. A session that
  *    ended without «Назад» in MX left Lampa no marks: then the episode started last (or the one MX went on to) plays,
- *    from MX's own memory of the place. No record of the start in that release: the latest file TorrServer streamed.
+ *    from Lampa's last mark of it. No record of the start in that release: the latest file TorrServer streamed.
  * 4) Lampa's video screensaver releases the hardware video decoder when it closes (it kept it, see below).
  * 5) «История» is the bookmark list again (Lampa 3.4 with CUB sync made it a screen of panels): OK opens the card.
  * 6) MX shows «Сезон 1 Серия 2: Название» for an episode. The core hands the external player only the episode's
@@ -19,7 +19,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.9.0';
+    window.lampa_tv_quick_start = '1.9.1';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -44,16 +44,14 @@
             return;
         }
         var p = pickEpisode(list, play), target = p.target;
-        fromMx(p.mx);
-        if (play) console.log('QuickStart', 'continue →', target ? 'S' + (target.element.season || '-') + 'E' + (target.element.episode || '-') + ' file ' + target.element.id : 'nothing to play', p.started ? 'started ' + play.file : 'no start record', 'streamed', p.opened.join(','), target && target.element.timeline && target.element.timeline.time ? 'from Lampa ' + target.element.timeline.time + ' s' : 'from MX own place');
+        if (play) console.log('QuickStart', 'continue →', target ? 'S' + (target.element.season || '-') + 'E' + (target.element.episode || '-') + ' file ' + target.element.id : 'nothing to play', p.started ? 'started ' + play.file : 'no start record', 'streamed', p.opened.join(','), target && target.element.timeline && target.element.timeline.time ? 'from ' + target.element.timeline.time + ' s (Lampa mark)' : 'from the start');
         if (target && Lampa.Modal && Lampa.Modal.scroll) Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
         if (target && play) target.item.trigger('hover:enter');
     }
 
-    // The episode «Продолжить» plays and whether MX resumes it from its own place (mx): the choice only, no side
-    // effects — ru-torrents labels the button with it, so the label and the play are one decision.
+    // The episode «Продолжить» plays: the choice only, no side effects — ru-torrents labels the button with it, so the
+    // label and the play are one decision.
     function pickEpisode(list, play) {
-        var mx = null;
         // the episode watched LAST (timeline `updated`), unfinished → it, finished → the next one. Not the first unfinished
         // one: an old half-watched episode pulled the viewer back (owner, 2026-10-18: E01 at 4 % reopened after E04–E05).
         var target = null, last = null, lastWatched = -1;
@@ -76,7 +74,10 @@
         //  · a played episode has a mark newer than the start (MX left with «Назад»): the newest one, unfinished → it,
         //    finished → the next one;
         //  · no such mark (TV off, «Домой», screensaver — Lampa never heard back): the started episode, or a later one MX went
-        //    on to; its old Lampa mark is cleared so MX resumes from its own memory of the exact place.
+        //    on to, from Lampa's last mark of it. Not MX's own memory: the Lampa app always hands MX a position — the mark's
+        //    time, or 1 ms when there is none (lampa-app MainActivity, playerTimeCode «continue»), so MX starts there
+        //    (TV 2026-11-04: MX knew 15:28, got position=1, started over). 1.6–1.9.0 cleared that mark → the next
+        //    «Продолжить» started the episode over; nothing is cleared now.
         var started = play && play.at ? list.filter(function (r) { return r.element.id === play.file; })[0] : null;
         var opened = play && play.opened || [];
         if (!started && play && opened.length) {
@@ -87,7 +88,6 @@
             list.forEach(function (r) { if (opened.indexOf(r.element.id) >= 0) latest = r; });
             if (latest) {
                 target = percent(latest.element) >= 90 ? list[list.indexOf(latest) + 1] || null : latest;
-                if (target === latest) mx = latest;
             }
         }
         if (started) {
@@ -101,23 +101,9 @@
             else {
                 target = started;
                 played.forEach(function (r) { if (list.indexOf(r) > from) target = r; });
-                mx = target;
             }
         }
-        return { target: target, mx: mx, started: started, opened: opened };
-    }
-
-    // Lampa never heard where MX stopped: its old mark's time is cleared, so the app hands MX no position and MX resumes
-    // from its own memory of this very file (it keeps one per address — the same release and file give the same address)
-    // The core plays the list item's OWN copy of the mark (Timeline.view hands out copies; Player.play(element) sends
-    // position = element.timeline.time || -1): clearing only the stored mark left the old time in that copy, and MX
-    // started from Lampa's stale place, not its own (owner, 2026-11-04: «воспроизводит не последнее место просмотра»).
-    function fromMx(r) {
-        var tl = r && r.element.timeline;
-        if (tl && tl.time && Lampa.Timeline && Lampa.Timeline.update) {
-            Lampa.Timeline.update({ hash: tl.hash, percent: tl.percent, time: 0, duration: tl.duration, profile: tl.profile });
-            tl.time = 0;
-        }
+        return { target: target, started: started, opened: opened };
     }
 
     Lampa.Listener.follow('torrent_file', function (e) {

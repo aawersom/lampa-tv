@@ -25,7 +25,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.19.1';
+    window.lampa_tv_ru_torrents = '1.19.2';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -304,7 +304,7 @@
             done((Array.isArray(list) ? list : []).map(function (v) { return v.file_index; }));
         }, function () { done([]); }, JSON.stringify({ action: 'list', hash: hash }));
     }
-    // «S2E5» (and «· 23:10» when Lampa knows the place) of the episode «Продолжить» plays — quick-start's own choice
+    // «S2E5 · 23:10» of the episode «Продолжить» plays and the place the Lampa app hands MX (its mark's time) — quick-start's own choice
     // (window.lampa_tv_pick_episode) over the release's episodes noted at its last start; '' when not known
     function continueLabel(card, rec, opened) {
         var pick = window.lampa_tv_pick_episode;
@@ -316,7 +316,7 @@
         });
         var p = pick(rows, { file: rec.file, at: rec.at, opened: opened || [] }), el = p.target && p.target.element;
         if (!el) return '';
-        var time = p.mx !== p.target && el.timeline && el.timeline.time > 0 ? ' · ' + clock(el.timeline.time) : '';
+        var time = el.timeline && el.timeline.time > 0 ? ' · ' + clock(el.timeline.time) : '';
         return 'S' + el.season + 'E' + el.episode + time;
     }
     // 14:20, 1:02:05 (Lampa's secondsToTime(…, true) gives hours:minutes — «00:14» for 14 min 20 s, TV 2026-11-04)

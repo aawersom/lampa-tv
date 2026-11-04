@@ -84,13 +84,16 @@ check('notePlay keeps the card and other records, adds the start with the episod
 
 // the label is quick-start's own choice over the noted episodes
 const qs = fs.readFileSync(path.join(__dirname, '..', 'quick-start.js'), 'utf8');
-win.lampa_tv_pick_episode = new Function(qs.slice(qs.indexOf('    function percent(el)'), qs.indexOf("    // Lampa never heard where MX stopped")) + 'return pickEpisode;')();
+win.lampa_tv_pick_episode = new Function(qs.slice(qs.indexOf('    function percent(el)'), qs.indexOf("    Lampa.Listener.follow('torrent_file', function (e) {")) + 'return pickEpisode;')();
 const card = { id: 1396, name: 'Во все тяжкие', original_title: 'Breaking Bad' };
 const eps = [[11, 2, 4], [12, 2, 5], [13, 2, 6]];
 w = world([]);
 check('label: started S2E5, MX went on to S2E6, TV off → «S2E6»', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12, 13]), 'S2E6');
 marks['h:25Breaking Bad'] = { percent: 40, time: 1390, updated: 900 };
 check('label: left MX with «Назад» on S2E5 at 23:10 → «S2E5 · 23:10»', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12]), 'S2E5 · 23:10');
+delete marks['h:25Breaking Bad']; marks['h:26Breaking Bad'] = { percent: 30, time: 878, updated: 100 };
+check('label: MX went on to S2E6 with an older mark at 14:38 → «S2E6 · 14:38» (where it will start)', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12, 13]), 'S2E6 · 14:38');
+delete marks['h:26Breaking Bad'];
 check('label: a film / no start known → none', [w.api.continueLabel({ id: 1, title: 'F' }, { file: 1, at: 5 }, []), w.api.continueLabel(card, {}, [])], ['', '']);
 marks['h:25Breaking Bad'] = { percent: 30, time: 3725, updated: 900 };
 check('label: past an hour → «1:02:05»', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12]), 'S2E5 · 1:02:05');
