@@ -25,7 +25,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.19.3';
+    window.lampa_tv_ru_torrents = '1.20.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -316,7 +316,9 @@
         });
         var p = pick(rows, { file: rec.file, at: rec.at, opened: opened || [] }), el = p.target && p.target.element;
         if (!el) return '';
-        var time = el.timeline && el.timeline.time > 0 ? ' · ' + clock(el.timeline.time) : '';
+        // MX resumes from its own place when it streamed this very file last (quick-start 7) — Lampa's time would be off
+        var tl = el.timeline || {}, mx = (opened || []).concat([rec.file]).indexOf(el.id) >= 0 && (tl.percent || 0) < 90 && !(!tl.percent && tl.updated);
+        var time = !mx && tl.time > 0 ? ' · ' + clock(tl.time) : '';
         return 'S' + el.season + 'E' + el.episode + time;
     }
     // 14:20, 1:02:05 (Lampa's secondsToTime(…, true) gives hours:minutes — «00:14» for 14 min 20 s, TV 2026-11-04)
