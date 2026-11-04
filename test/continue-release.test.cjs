@@ -15,25 +15,29 @@ function check(title, got, want) {
 }
 
 // TorrServer: the card's releases with their timestamps (seconds); a request log
+const win = {};
+const marks = {};
 function world(torrents, record) {
   const sent = [];
   const store = { lampa_tv_last_release: record || {}, torrents_view: [] };
   const Lampa = {
     Torserver: { url: () => 'http://ts' },
     Storage: { get: (k, d) => (k in store ? store[k] : d), set: (k, v) => { store[k] = v; } },
-    Utils: { clearCard: (c) => c },
+    Utils: { clearCard: (c) => c, hash: (x) => 'h:' + x, secondsToTime: (sec) => Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0') },
+    Timeline: { view: (h) => Object.assign({ hash: h, percent: 0, time: 0, updated: 0 }, marks[h] || {}) },
     Reguest: function () {
       this.timeout = () => {};
       this.silent = (url, ok, fail, post) => {
         const b = post ? JSON.parse(post) : {};
         sent.push(b);
-        if (b.action === 'list') ok(torrents.map((t) => ({ hash: t.hash, title: '[LAMPA] ' + t.hash, timestamp: t.ts, data: JSON.stringify({ movie: t.movie }) })));
+        if (b.action === 'list') ok(torrents.map((t) => ({ hash: t.hash, title: '[LAMPA] ' + t.hash, poster: 'p', category: 'tv', timestamp: t.ts, data: t.data || JSON.stringify(Object.assign({ movie: t.movie }, t.play ? { lampa_tv_play: t.play } : {})) })));
+        else if (b.action === 'set') { const t = torrents.find((x) => x.hash === b.hash); if (t) t.data = b.data; ok(''); }
         else if (b.action === 'add') ok({ hash: 'added' });
         else ok({});
       };
     },
   };
-  const api = new Function('Lampa', 'btih', 'setInterval', 'clearInterval', body + 'return { warmUp, continueRelease, rememberOpened };')(Lampa, (r) => r.hash, () => 1, () => {});
+  const api = new Function('Lampa', 'btih', 'setInterval', 'clearInterval', 'window', body + 'return { warmUp, continueRelease, rememberOpened, notePlay, continueLabel };')(Lampa, (r) => r.hash, () => 1, () => {}, win);
   return { api, sent };
 }
 const bb = { id: 1396, name: 'Во все тяжкие' };
@@ -60,4 +64,32 @@ check('…and the warm-up adds the recorded release from the parser answer', w.s
 w = world([{ hash: 'aaaa', ts: 5000, movie: { id: 1396, title: 'Film' } }, { hash: 'bbbb', ts: 100, movie: bb }]);
 w.api.continueRelease(bb, (h) => { chosen = h; });
 check('film with the same id is not the series', chosen, 'bbbb');
+
+// 1.19.0: a release only LOOKED at moves TorrServer's timestamp; the start noted in a release's data decides
+w = world([{ hash: 'aaaa1111', ts: 1000, movie: bb, play: { file: 12, at: 500, eps: [[11, 2, 4], [12, 2, 5]] } }, { hash: 'bbbb2222', ts: 9000, movie: bb }]);
+let rec = null;
+w.api.continueRelease(bb, (h, t, r) => { chosen = h; rec = r; });
+check('a peek at another release (newer timestamp, nothing started) does not move «Продолжить»', [chosen, rec && rec.file], ['aaaa1111', 12]);
+w = world([{ hash: 'aaaa1111', ts: 1000, movie: bb, play: { file: 12, at: 500 } }, { hash: 'bbbb2222', ts: 900, movie: bb, play: { file: 3, at: 800 } }]);
+w.api.continueRelease(bb, (h) => { chosen = h; });
+check('two releases started: the one started last', chosen, 'bbbb2222');
+w = world([{ hash: 'aaaa1111', ts: 1000, movie: bb, play: { file: 12, at: 500 } }], { 'tv:1396': { hash: 'aaaa1111', file: 13, at: 700 } });
+w.api.continueRelease(bb, (h, t, r) => { rec = r; });
+check('a newer localStorage record of the same release tells the file', rec.file, 13);
+// notePlay: the start goes into the release's data, Lampa's card and tor-updater's record kept
+w = world([{ hash: 'aaaa1111', ts: 1000, movie: bb, data: JSON.stringify({ lampa: true, movie: bb, tor_updater_follow: { k: 1 } }) }]);
+w.api.notePlay('aaaa1111', 12, [{ id: 11, season: 2, episode: 4 }, { id: 12, season: 2, episode: 5 }, { id: 99 }]);
+const setBody = w.sent.find((b) => b.action === 'set'), d = JSON.parse(setBody.data);
+check('notePlay keeps the card and other records, adds the start with the episodes', [d.lampa, d.movie.id, d.tor_updater_follow.k, d.lampa_tv_play.file, JSON.stringify(d.lampa_tv_play.eps), setBody.title, setBody.poster], [true, 1396, 1, 12, '[[11,2,4],[12,2,5]]', '[LAMPA] aaaa1111', 'p']);
+
+// the label is quick-start's own choice over the noted episodes
+const qs = fs.readFileSync(path.join(__dirname, '..', 'quick-start.js'), 'utf8');
+win.lampa_tv_pick_episode = new Function(qs.slice(qs.indexOf('    function percent(el)'), qs.indexOf("    // Lampa never heard where MX stopped")) + 'return pickEpisode;')();
+const card = { id: 1396, name: 'Во все тяжкие', original_title: 'Breaking Bad' };
+const eps = [[11, 2, 4], [12, 2, 5], [13, 2, 6]];
+w = world([]);
+check('label: started S2E5, MX went on to S2E6, TV off → «S2E6»', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12, 13]), 'S2E6');
+marks['h:25Breaking Bad'] = { percent: 40, time: 1390, updated: 900 };
+check('label: left MX with «Назад» on S2E5 at 23:10 → «S2E5 · 23:10»', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12]), 'S2E5 · 23:10');
+check('label: a film / no start known → none', [w.api.continueLabel({ id: 1, title: 'F' }, { file: 1, at: 5 }, []), w.api.continueLabel(card, {}, [])], ['', '']);
 process.exitCode = failed ? 1 : 0;

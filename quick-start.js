@@ -19,7 +19,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.8.1';
+    window.lampa_tv_quick_start = '1.9.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -43,6 +43,17 @@
             if (list.length === 1 || (main.element.length || 0) >= total * 0.85) main.item.trigger('hover:enter');
             return;
         }
+        var p = pickEpisode(list, play), target = p.target;
+        fromMx(p.mx);
+        if (play) console.log('QuickStart', 'continue →', target ? 'S' + (target.element.season || '-') + 'E' + (target.element.episode || '-') + ' file ' + target.element.id : 'nothing to play', p.started ? 'started ' + play.file : 'no start record', 'streamed', p.opened.join(','), target && target.element.timeline && target.element.timeline.time ? 'from Lampa ' + target.element.timeline.time + ' s' : 'from MX own place');
+        if (target && Lampa.Modal && Lampa.Modal.scroll) Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
+        if (target && play) target.item.trigger('hover:enter');
+    }
+
+    // The episode «Продолжить» plays and whether MX resumes it from its own place (mx): the choice only, no side
+    // effects — ru-torrents labels the button with it, so the label and the play are one decision.
+    function pickEpisode(list, play) {
+        var mx = null;
         // the episode watched LAST (timeline `updated`), unfinished → it, finished → the next one. Not the first unfinished
         // one: an old half-watched episode pulled the viewer back (owner, 2026-10-18: E01 at 4 % reopened after E04–E05).
         var target = null, last = null, lastWatched = -1;
@@ -76,7 +87,7 @@
             list.forEach(function (r) { if (opened.indexOf(r.element.id) >= 0) latest = r; });
             if (latest) {
                 target = percent(latest.element) >= 90 ? list[list.indexOf(latest) + 1] || null : latest;
-                if (target === latest) fromMx(latest);
+                if (target === latest) mx = latest;
             }
         }
         if (started) {
@@ -90,12 +101,10 @@
             else {
                 target = started;
                 played.forEach(function (r) { if (list.indexOf(r) > from) target = r; });
-                fromMx(target);
+                mx = target;
             }
         }
-        if (play) console.log('QuickStart', 'continue →', target ? 'S' + (target.element.season || '-') + 'E' + (target.element.episode || '-') + ' file ' + target.element.id : 'nothing to play', started ? 'started ' + play.file : 'no start record', 'streamed', opened.join(','), target && target.element.timeline && target.element.timeline.time ? 'from Lampa ' + target.element.timeline.time + ' s' : 'from MX own place');
-        if (target && Lampa.Modal && Lampa.Modal.scroll) Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
-        if (target && play) target.item.trigger('hover:enter');
+        return { target: target, mx: mx, started: started, opened: opened };
     }
 
     // Lampa never heard where MX stopped: its old mark's time is cleared, so the app hands MX no position and MX resumes
@@ -119,6 +128,9 @@
             setTimeout(function () { try { choose(rendered.slice(), movie); } catch (err) { console.log('QuickStart', err && err.message); } }, 0);
         } else if (e.type === 'render') rendered.push({ item: e.item, element: e.element });
     });
+
+    // for ru-torrents: the button «Продолжить» says which episode it plays (same choice as the list makes)
+    window.lampa_tv_pick_episode = pickEpisode;
 
     // ---- 2) preload ----
     function runtimeSeconds() {

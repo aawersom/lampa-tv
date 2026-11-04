@@ -25,7 +25,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.18.0';
+    window.lampa_tv_ru_torrents = '1.19.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -243,54 +243,113 @@
     // to TorrServer made it the newest there a second before this button asked (TV 2026-10-28 20:27: the card opened, the
     // warm-up added an old .avi release, «Продолжить» played its S2E1 instead of the BD release watched the night before).
     // The warm-up now warms this very release; the record only says which file of it was started last, and when.
+    // 1.19.0 (owner, 2026-11-04: «часто ошибается»): TorrServer's `timestamp` also moves when a list is only LOOKED at, so a
+    // peek at another release made it «the last». Now every start of a file from Lampa is written into that release's
+    // own data in TorrServer (PLAY_KEY: the file, when, and the release's episodes in list order) — it outlives Lampa's
+    // storage — and the release to continue is the one started last. No start noted for any release of the card (older
+    // releases) → TorrServer's newest, as before.
+    var PLAY_KEY = 'lampa_tv_play';
+    function torrentData(t) {
+        try { return (typeof t.data === 'string' ? JSON.parse(t.data || '{}') : t.data) || {}; } catch (err) { return {}; }
+    }
+    function lastStart(t, local) { // { file, at, eps } of the latest start of this release that is known
+        var rec = torrentData(t)[PLAY_KEY] || {}, hash = String(t.hash).toLowerCase();
+        if (local && local.hash === hash && (local.at || 0) > (rec.at || 0)) return { file: local.file, at: local.at, eps: rec.eps };
+        return rec;
+    }
+    // only the starts noted in TorrServer pick the release: the localStorage record alone was once found pointing to a
+    // release not watched (TV 2026-10-28) — it only tells the file of that same release
+    function pickRelease(list, card) {
+        var started = null, newest = null;
+        (Array.isArray(list) ? list : []).forEach(function (t) {
+            var d = torrentData(t), m = d.movie, at = (d[PLAY_KEY] || {}).at || 0;
+            if (!m || m.id != card.id || !!m.name !== !!card.name) return;
+            if (!newest || t.timestamp > newest.timestamp) newest = t;
+            if (at && (!started || at > torrentData(started)[PLAY_KEY].at)) started = t;
+        });
+        return started || newest;
+    }
     function continueRelease(card, done, none) {
         var url = Lampa.Torserver && Lampa.Torserver.url && Lampa.Torserver.url();
         if (!url || !card || !card.id) return none && none();
         var net = new Lampa.Reguest();
         net.timeout(5000);
         net.silent(url.replace(/\/$/, '') + '/torrents', function (list) {
-            var newest = null;
-            (Array.isArray(list) ? list : []).forEach(function (t) {
-                var m = null;
-                try { m = (typeof t.data === 'string' ? JSON.parse(t.data || '{}') : t.data || {}).movie; } catch (err) { /* not Lampa's */ }
-                if (!m || m.id != card.id || !!m.name !== !!card.name) return;
-                if (!newest || t.timestamp > newest.timestamp) newest = t;
-            });
-            if (newest) done(String(newest.hash).toLowerCase(), newest);
+            var local = lastRecord(card), t = pickRelease(list, card);
+            if (t) done(String(t.hash).toLowerCase(), t, lastStart(t, local));
             else if (none) none();
         }, function () { if (none) none(); }, JSON.stringify({ action: 'list' }));
+    }
+    // a file of a release started from Lampa → its start goes into the release's data in TorrServer (merged: Lampa keeps
+    // the card there, tor-updater its follow record)
+    function notePlay(hash, file, playlist) {
+        var url = Lampa.Torserver && Lampa.Torserver.url && Lampa.Torserver.url();
+        if (!url) return;
+        var base = url.replace(/\/$/, ''), net = new Lampa.Reguest();
+        net.timeout(5000);
+        net.silent(base + '/torrents', function (list) {
+            var t = (Array.isArray(list) ? list : []).filter(function (x) { return String(x.hash).toLowerCase() === hash; })[0];
+            if (!t) return;
+            var data = torrentData(t);
+            data[PLAY_KEY] = { file: file, at: Date.now(), eps: (playlist || []).filter(function (p) { return p && p.episode; }).map(function (p) { return [p.id, p.season, p.episode]; }) };
+            net.silent(base + '/torrents', function () {}, function () {}, JSON.stringify({ action: 'set', hash: t.hash, title: t.title || '', poster: t.poster || '', category: t.category || '', data: JSON.stringify(data) }), { dataType: 'text' });
+        }, function () {}, JSON.stringify({ action: 'list' }));
+    }
+
+    // files TorrServer streamed of a release since its last start from Lampa (the list is reset at every start)
+    function streamed(hash, done) {
+        var net = new Lampa.Reguest();
+        net.timeout(3000);
+        net.silent(Lampa.Torserver.url().replace(/\/$/, '') + '/viewed', function (list) {
+            done((Array.isArray(list) ? list : []).map(function (v) { return v.file_index; }));
+        }, function () { done([]); }, JSON.stringify({ action: 'list', hash: hash }));
+    }
+    // «S2E5» (and «· 23:10» when Lampa knows the place) of the episode «Продолжить» plays — quick-start's own choice
+    // (window.lampa_tv_pick_episode) over the release's episodes noted at its last start; '' when not known
+    function continueLabel(card, rec, opened) {
+        var pick = window.lampa_tv_pick_episode;
+        if (!pick || !card.name || !rec || !rec.at || !rec.eps || !rec.eps.length) return '';
+        var title = card.original_title || card.original_name;
+        var rows = rec.eps.map(function (x) {
+            var h = Lampa.Utils.hash([x[1], x[1] > 10 ? ':' : '', x[2], title].join(''));
+            return { element: { id: x[0], season: x[1], episode: x[2], timeline: Lampa.Timeline.view(h) } };
+        });
+        var p = pick(rows, { file: rec.file, at: rec.at, opened: opened || [] }), el = p.target && p.target.element;
+        if (!el) return '';
+        var time = p.mx !== p.target && el.timeline && el.timeline.time > 0 ? ' · ' + Lampa.Utils.secondsToTime(el.timeline.time, true) : '';
+        return 'S' + el.season + 'E' + el.episode + time;
     }
 
     function addContinue(e) {
         if (e.type !== 'complite' || !e.data || !e.data.movie || !e.object || !e.object.activity) return;
         var card = e.data.movie, render = e.object.activity.render();
-        continueRelease(card, function (hash) {
+        continueRelease(card, function (hash, t0, rec0) {
             var play = render.find('.button--play');
             if (!play.length || render.find('.button--continue').length) return;
             var btn = $('<div class="full-start__button selector button--continue">' + CONTINUE_ICON + '<span>Продолжить</span></div>');
+            // the button says what it plays: «Продолжить · S2E5» (+ the place when Lampa knows it) — the same choice the list makes
+            streamed(hash, function (opened) {
+                var label = continueLabel(card, rec0, opened);
+                if (label) btn.find('span').text('Продолжить · ' + label);
+            });
             btn.on('hover:enter', function () {
                 // the mark travels with this very open (Lampa hands this object to the file list) and never gets saved;
                 // file/at = the file started last from Lampa and when; `opened` = files TorrServer streamed since then.
                 // Lampa learns a position only when MX is left with «Назад» — a session ended by switching the TV off /
                 // «Домой» / the screensaver leaves no marks (owner 2026-10-23: marks stopped at S2E4, MX was on S2E6)
-                // The release is chosen again now: a release opened from «Торренты» since the card was built is the one.
-                var movie = Object.assign({}, card), last = lastRecord(card), sent = false;
-                var start = function (h) {
-                    var go = function (opened) {
+                // The release is chosen again now: a release started since the card was built is the one.
+                var movie = Object.assign({}, card), sent = false;
+                var start = function (h, t, rec) {
+                    rec = rec || {};
+                    streamed(h, function (opened) {
                         if (sent) return;
                         sent = true;
-                        var same = last.hash === h;
-                        console.log('RuTorrents', 'continue', card.id, h.slice(0, 8), same ? 'file ' + last.file + ' at ' + new Date(last.at || 0).toISOString() : 'no record of it (record: ' + String(last.hash || '-').slice(0, 8) + ')', 'streamed', (opened || []).join(','));
-                        Object.defineProperty(movie, 'lampa_tv_play', { value: { file: same ? last.file : undefined, at: same ? last.at : undefined, opened: opened || [] } });
+                        console.log('RuTorrents', 'continue', card.id, h.slice(0, 8), rec.at ? 'file ' + rec.file + ' started ' + new Date(rec.at).toISOString() : 'no start known', 'streamed', opened.join(','));
+                        Object.defineProperty(movie, 'lampa_tv_play', { value: { file: rec.at ? rec.file : undefined, at: rec.at || undefined, opened: opened } });
                         Lampa.Torrent.open(h, movie);
-                    };
-                    var net = new Lampa.Reguest();
-                    net.timeout(3000);
-                    net.silent(Lampa.Torserver.url().replace(/\/$/, '') + '/viewed', function (list) {
-                        go((Array.isArray(list) ? list : []).map(function (v) { return v.file_index; }));
-                    }, function () { go([]); }, JSON.stringify({ action: 'list', hash: h }));
+                    });
                 };
-                continueRelease(card, start, function () { start(hash); });
+                continueRelease(card, start, function () { start(hash, t0, rec0); });
             });
             play.after(btn);
             // the card's buttons are collected when it gets the focus; this one comes later
@@ -625,6 +684,7 @@
             // a file is played: TorrServer's list of streamed files restarts here, so later it holds only this session —
             // the file started now and those MX goes on to (its playlist moves forward)
             if (e.type === 'onenter') {
+                try { notePlay(hash, e.element.id, e.element.playlist); } catch (err) { console.log('RuTorrents', 'note play error', err && err.message); }
                 var net = new Lampa.Reguest();
                 net.timeout(3000);
                 net.silent(Lampa.Torserver.url().replace(/\/$/, '') + '/viewed', function () {}, function () {}, JSON.stringify({ action: 'rem', hash: hash, file_index: -1 }), { dataType: 'text' });
