@@ -5,7 +5,7 @@ const path = require('path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'quick-start.js'), 'utf8');
 const body = src.slice(src.indexOf('    function percent(el)'), src.indexOf("    Lampa.Listener.follow('torrent_file'"));
 let focused = null, entered = null;
-const Lampa = { Modal: { scroll: () => ({ render: () => null }) }, Controller: { collectionFocus: (item) => { focused = item.name; } } };
+const Lampa = { Modal: { scroll: () => ({ render: () => null }) }, Controller: { collectionFocus: (item) => { focused = item.name; } }, Timeline: { update: () => {} } };
 const choose = new Function('Lampa', body + 'return choose;')(Lampa);
 
 const ep = (name, percent, updated) => ({ item: { name, trigger: () => { entered = name; } }, element: { id: name, episode: 1, timeline: percent === undefined ? undefined : { percent, updated } } });
@@ -56,4 +56,11 @@ const big = (id, length) => ({ item: { name: id, trigger: () => { entered = id; 
 check('film: one file → starts', [big(1, 5e9)], film, null, 1);
 check('film collection, «Продолжить» remembers file 3 → plays 3', [big(1, 4e9), big(2, 4e9), big(3, 4e9)], Object.defineProperty(Object.assign({}, film), 'lampa_tv_play', { value: { file: 3 } }), null, 3);
 check('film collection, nothing remembered → list stays', [big(1, 4e9), big(2, 4e9)], film, null, null);
+// TV 2026-11-04: the core plays the item's own copy of the mark — its stale time must go, or MX starts from Lampa's old place
+{ const stale = [ep('E1', 100, 100), ep('E2', 30, 100), ep('E3', 0, 0)]; stale[1].element.timeline.time = 600;
+  check('no fresh mark: the played item itself carries no old time (MX resumes its own place)', stale, cont('E2', 500, ['E2']), 'E2', 'E2');
+  const t = stale[1].element.timeline.time; const ok = t === 0; if (!ok) failed++; console.log((ok ? 'ok   ' : 'FAIL ') + 'item timeline.time cleared → position -1' + (ok ? '' : ' — got ' + t)); }
+{ const fresh2 = [ep('E2', 30, 700), ep('E3', 0, 0)]; fresh2[0].element.timeline.time = 600;
+  check('fresh mark (left MX with «Назад»): plays E2', fresh2, cont('E2', 500, ['E2']), 'E2', 'E2');
+  const ok = fresh2[0].element.timeline.time === 600; if (!ok) failed++; console.log((ok ? 'ok   ' : 'FAIL ') + 'fresh mark keeps its time → MX starts there'); }
 process.exitCode = failed ? 1 : 0;

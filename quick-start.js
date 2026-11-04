@@ -19,7 +19,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.8.0';
+    window.lampa_tv_quick_start = '1.8.1';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -93,17 +93,21 @@
                 fromMx(target);
             }
         }
-        if (play) console.log('QuickStart', 'continue →', target ? 'S' + (target.element.season || '-') + 'E' + (target.element.episode || '-') + ' file ' + target.element.id : 'nothing to play', started ? 'started ' + play.file : 'no start record', 'streamed', opened.join(','));
+        if (play) console.log('QuickStart', 'continue →', target ? 'S' + (target.element.season || '-') + 'E' + (target.element.episode || '-') + ' file ' + target.element.id : 'nothing to play', started ? 'started ' + play.file : 'no start record', 'streamed', opened.join(','), target && target.element.timeline && target.element.timeline.time ? 'from Lampa ' + target.element.timeline.time + ' s' : 'from MX own place');
         if (target && Lampa.Modal && Lampa.Modal.scroll) Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
         if (target && play) target.item.trigger('hover:enter');
     }
 
     // Lampa never heard where MX stopped: its old mark's time is cleared, so the app hands MX no position and MX resumes
     // from its own memory of this very file (it keeps one per address — the same release and file give the same address)
+    // The core plays the list item's OWN copy of the mark (Timeline.view hands out copies; Player.play(element) sends
+    // position = element.timeline.time || -1): clearing only the stored mark left the old time in that copy, and MX
+    // started from Lampa's stale place, not its own (owner, 2026-11-04: «воспроизводит не последнее место просмотра»).
     function fromMx(r) {
         var tl = r && r.element.timeline;
         if (tl && tl.time && Lampa.Timeline && Lampa.Timeline.update) {
             Lampa.Timeline.update({ hash: tl.hash, percent: tl.percent, time: 0, duration: tl.duration, profile: tl.profile });
+            tl.time = 0;
         }
     }
 
