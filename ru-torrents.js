@@ -18,6 +18,7 @@
  * 8) Card buttons: «Смотреть» → «Торренты», «Онлайн» button, no subscribe bell.
  * 9) Filter: Качество, then Сезон — in the menu and in the chosen values next to «Фильтр».
  * 10) Episode list: «S01/101 Name.mkv» (season folder, episode ×100) read as S1E1; names without TMDB are clean and alike.
+ * 12) Spare parser jac-red.ru, asked from here when the configured ones fail, find nothing or are slow (CUB rewrites it in settings).
  * 11) A series' releases show their bitrate: size / running time of the episodes they hold (Lampa shows it only for films).
  * Patched: Parser.get callback (merge + rank) and the torrents component's sortWithViewed, which Lampa
  * calls after every sort (components/torrents.js sortResults). Already-opened releases stay pinned on top.
@@ -25,7 +26,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.20.0';
+    window.lampa_tv_ru_torrents = '1.21.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -637,8 +638,54 @@
             if (params && typeof params === 'object') Object.defineProperty(params, '__ruJson', { value: json, writable: true, configurable: true, enumerable: false });
         }
 
+        // 12) Spare parser (owner, 2026-11-04). Only jac.red answers the TV now (jacred.su dead, jac.black behind Cloudflare
+        //     hangs); jac-red.ru answers too, but CUB's server module «engineer» rewrites it to jac.red in the parser settings
+        //     at every start. So it is asked from here, through Lampa's own Jackett request (Parser.jackett: same filters,
+        //     same native channel): when the configured parsers fail, find nothing, or have not answered in SPARE_AFTER.
+        //     Its results are the same releases as jac.red's (TV 2026-11-04: 254 of 256 hashes in common) — a stand-by.
+        var SPARE = 'http://jac-red.ru', SPARE_AFTER = 6000;
+        function found(json) { return !!(json && json.Results && json.Results.length); }
+        function ask(params, oncomplite, onerror) {
+            var useSpare = Lampa.Parser.jackett && Lampa.Storage.field('parser_torrent_type') === 'jackett';
+            if (!useSpare) return orig.call(Lampa.Parser, params, oncomplite, onerror);
+            var settled = false, main = null, spare = null, started = false; // main/spare: { json } or { error }
+            var finish = function (json, from) {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                if (from === 'spare') console.log('RuTorrents', 'spare parser answered', (json.Results || []).length);
+                oncomplite(json);
+            };
+            var settle = function () { // both have answered, neither found anything
+                if (settled || !main || (started && !spare)) return;
+                if (main.json) return finish(main.json, 'main');
+                if (spare && spare.json) return finish(spare.json, 'spare');
+                settled = true;
+                clearTimeout(timer);
+                onerror(main.error);
+            };
+            var startSpare = function (why) {
+                if (started || settled) return;
+                started = true;
+                console.log('RuTorrents', 'spare parser asked:', why);
+                Lampa.Parser.jackett(params, SPARE, '', 1, function (json) {
+                    spare = { json: json };
+                    if (found(json)) finish(json, 'spare'); else settle();
+                }, function (e) { spare = { error: e }; settle(); });
+            };
+            var timer = setTimeout(function () { startSpare('no answer in ' + SPARE_AFTER / 1000 + ' s'); }, SPARE_AFTER);
+            orig.call(Lampa.Parser, params, function (json) {
+                main = { json: json };
+                if (found(json)) return finish(json, 'main');
+                if (!started) startSpare('nothing found'); else settle();
+            }, function (e) {
+                main = { error: e };
+                if (!started) startSpare('error'); else settle();
+            });
+        }
+
         function run(params, oncomplite, onerror) {
-            return orig.call(Lampa.Parser, params, function (json) {
+            return ask(params, function (json) {
                 try { process(json, params); attach(params, json); } catch (e) { console.log('RuTorrents', 'process error', e && e.message); }
                 oncomplite(json);
             }, onerror);
