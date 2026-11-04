@@ -25,7 +25,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.19.2';
+    window.lampa_tv_ru_torrents = '1.19.3';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -333,11 +333,16 @@
             var play = render.find('.button--play');
             if (!play.length || render.find('.button--continue').length) return;
             var btn = $('<div class="full-start__button selector button--continue">' + CONTINUE_ICON + '<span>Продолжить</span></div>');
-            // the button says what it plays: «Продолжить · S2E5» (+ the place when Lampa knows it) — the same choice the list makes
-            streamed(hash, function (opened) {
-                var label = continueLabel(card, rec0, opened);
-                if (label) btn.find('span').text('Продолжить · ' + label);
-            });
+            // the button says what it plays: «Продолжить · S2E5 · 14:38» — the same choice the list makes; worked out again
+            // when the button gets the focus (back from MX the card is the same, the episode and place are not)
+            var relabel = function (h, rec) {
+                streamed(h, function (opened) {
+                    var label = continueLabel(card, rec, opened);
+                    btn.find('span').text(label ? 'Продолжить · ' + label : 'Продолжить');
+                });
+            };
+            relabel(hash, rec0);
+            btn.on('hover:focus', function () { continueRelease(card, function (h, t, rec) { relabel(h, rec); }); });
             btn.on('hover:enter', function () {
                 // the mark travels with this very open (Lampa hands this object to the file list) and never gets saved;
                 // file/at = the file started last from Lampa and when; `opened` = files TorrServer streamed since then.
