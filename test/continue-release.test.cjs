@@ -23,7 +23,7 @@ function world(torrents, record) {
   const Lampa = {
     Torserver: { url: () => 'http://ts' },
     Storage: { get: (k, d) => (k in store ? store[k] : d), set: (k, v) => { store[k] = v; } },
-    Utils: { clearCard: (c) => c, hash: (x) => 'h:' + x, secondsToTime: (sec) => Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0') },
+    Utils: { clearCard: (c) => c, hash: (x) => 'h:' + x },
     Timeline: { view: (h) => Object.assign({ hash: h, percent: 0, time: 0, updated: 0 }, marks[h] || {}) },
     Reguest: function () {
       this.timeout = () => {};
@@ -92,4 +92,6 @@ check('label: started S2E5, MX went on to S2E6, TV off → «S2E6»', w.api.cont
 marks['h:25Breaking Bad'] = { percent: 40, time: 1390, updated: 900 };
 check('label: left MX with «Назад» on S2E5 at 23:10 → «S2E5 · 23:10»', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12]), 'S2E5 · 23:10');
 check('label: a film / no start known → none', [w.api.continueLabel({ id: 1, title: 'F' }, { file: 1, at: 5 }, []), w.api.continueLabel(card, {}, [])], ['', '']);
+marks['h:25Breaking Bad'] = { percent: 30, time: 3725, updated: 900 };
+check('label: past an hour → «1:02:05»', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12]), 'S2E5 · 1:02:05');
 process.exitCode = failed ? 1 : 0;
