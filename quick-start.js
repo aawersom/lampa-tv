@@ -13,7 +13,8 @@
  * 4) Lampa's video screensaver releases the hardware video decoder when it closes (it kept it, see below).
  * 5) «История» is the bookmark list again (Lampa 3.4 with CUB sync made it a screen of panels): OK opens the card.
  * 7) MX resumes from its own place (saved at every stop — TV off, «Домой» too) when it played this very file last: for that
- *    start the Lampa app's timecode mode is «ask», which hands MX no position.
+ *    start the Lampa app is told the timecode mode «ask», which hands MX no position; every other start, the owner's
+ *    own mode. Lampa's setting itself is never written.
  * 6) MX shows «Сезон 1 Серия 2: Название» for an episode. The core hands the external player only the episode's
  *    name (title = fname), so MX never said which season/episode plays. Every playlist entry is labelled too,
  *    so the title stays right when MX moves to the next file on its own.
@@ -21,7 +22,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.10.0';
+    window.lampa_tv_quick_start = '1.11.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -129,8 +130,12 @@
     // hands none, and MX resumes from its own record — it saves the place at every stop, per file address (TV
     // 2026-11-04: MX knew 15:28, Lampa 14:38). So for one start the mode is «ask» when MX streamed this very file of this
     // release in its last session (TorrServer's list of streamed files of the release, reset at every start from Lampa),
-    // and it is back to the owner's setting right after the app took the start. Not when the owner's setting is other
-    // than «continue», the episode is finished, or its mark was reset by hand.
+    // and the next start is told the owner's own setting again. Not when the owner's setting is other than «continue»,
+    // the episode is finished, or its mark was reset by hand.
+    // The mode is told to the APP for each start, right before it (its bridge AndroidJS.storageChange — what the app's own
+    // Lampa.Storage listener calls); Lampa's setting «Тайм-код» is never written. 1.10 wrote the setting and put it back
+    // by a timer: a page the app reloaded behind MX lost the timer and left the owner on «Спрашивать» (TV 2026-11-06).
+    // The app re-reads the real setting on every page load (lampa-app MainActivity.syncStorage) — nothing can stick.
     var streamed = {}; // release hash → file ids MX played in its last session
     function learnStreamed(hash, movie) {
         hash = String(hash).toLowerCase();
@@ -144,27 +149,17 @@
             (Array.isArray(list) ? list : []).forEach(function (v) { if (streamed[hash].indexOf(v.file_index) < 0) streamed[hash].push(v.file_index); });
         }, function () {}, JSON.stringify({ action: 'list', hash: hash }));
     }
-    var MODE = 'player_timecode', restoreMode = null;
-    function putBack() {
-        if (!restoreMode) return;
-        var was = restoreMode;
-        restoreMode = null;
-        Lampa.Storage.set(MODE, was);
+    function mxHasPlace(d) {
+        var tl = d && d.timeline;
+        if (!d || !d.torrent_hash || !tl || (streamed[String(d.torrent_hash).toLowerCase()] || []).indexOf(d.id) < 0) return false;
+        return (tl.percent || 0) < 90 && !(!tl.percent && tl.updated);
     }
-    if (Lampa.Player && Lampa.Player.listener) {
-        Lampa.Player.listener.follow('create', function (e) {
-            try {
-                var d = e && e.data, tl = d && d.timeline;
-                if (!d || !d.torrent_hash || !tl || (streamed[String(d.torrent_hash).toLowerCase()] || []).indexOf(d.id) < 0) return;
-                if ((tl.percent || 0) >= 90 || (!tl.percent && tl.updated)) return;
-                if (Lampa.Storage.field(MODE) !== 'continue' || restoreMode) return;
-                restoreMode = 'continue';
-                Lampa.Storage.set(MODE, 'ask'); // the app follows Lampa.Storage changes (lampa-app _androidStorageListener)
-                console.log('QuickStart', 'MX resumes its own place: file', d.id, '(Lampa mark ' + Math.round(tl.time || 0) + ' s)');
-                setTimeout(putBack, 15000);
-            } catch (err) { console.log('QuickStart', 'mx place', err && err.message); }
-        });
-        Lampa.Player.listener.follow('external', function () { setTimeout(putBack, 1000); });
+    function tellAppMode(d) {
+        var app = window.AndroidJS, own = Lampa.Storage.field('player_timecode');
+        if (!app || typeof app.storageChange !== 'function') return;
+        var mode = own === 'continue' && mxHasPlace(d) ? 'ask' : own;
+        app.storageChange(JSON.stringify({ name: 'player_timecode', value: mode }));
+        if (mode !== own) console.log('QuickStart', 'MX resumes its own place: file', d.id, '(Lampa mark ' + Math.round(d.timeline.time || 0) + ' s)');
     }
 
     // ---- 2) preload ----
@@ -247,6 +242,7 @@
             try {
                 if (data) { mxTitle(data); (data.playlist || []).forEach(mxTitle); }
             } catch (err) { console.log('QuickStart', 'mx title', err && err.message); }
+            try { tellAppMode(data); } catch (err) { console.log('QuickStart', 'mx place', err && err.message); }
             return toPlayer.apply(this, arguments);
         };
     }
