@@ -12,19 +12,25 @@
 (function () {
     'use strict';
     if (window.lampa_tv_similar) return;
-    window.lampa_tv_similar = '1.1.0';
+    window.lampa_tv_similar = '1.1.1';
 
     var IMDB = 'https://caching.graphql.imdb.com/';
     var IMDB_HEADERS = { 'Content-Type': 'application/json', 'x-imdb-client-name': 'imdb-web-next-localized', 'x-imdb-user-country': 'US', 'x-imdb-user-language': 'en-US' };
     var MIN_VOTES = 150;
-    var memo = {};
+    // TMDB answers of the session (a keyword's list serves every card sharing it); a card leaves ~26 (~300 KB) and Lampa
+    // lives for days on the TV, so past MEMO_MAX they are dropped and asked again when needed
+    var MEMO_MAX = 250, memo = {}, memoSize = 0;
 
     function tmdb(path, done) {
         if (memo[path]) return done(memo[path]);
         var net = new Lampa.Reguest();
         net.timeout(10000);
         var url = Lampa.TMDB.api(path + (path.indexOf('?') >= 0 ? '&' : '?') + 'api_key=' + Lampa.TMDB.key() + '&language=' + (Lampa.Storage.field('tmdb_lang') || 'ru'));
-        net.silent(url, function (json) { memo[path] = json; done(json); }, function () { done(null); });
+        net.silent(url, function (json) {
+            if (++memoSize > MEMO_MAX) { memo = {}; memoSize = 1; }
+            memo[path] = json;
+            done(json);
+        }, function () { done(null); });
     }
 
     // IMDb answers only to its own site in a browser (CORS) — Lampa's native request has no such limit
