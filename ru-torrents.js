@@ -18,15 +18,16 @@
  * 8) Card buttons: «Смотреть» → «Торренты», «Онлайн» button, no subscribe bell.
  * 9) Filter: Качество, then Сезон — in the menu and in the chosen values next to «Фильтр».
  * 10) Episode list: «S01/101 Name.mkv» (season folder, episode ×100) read as S1E1; names without TMDB are clean and alike.
- * 12) Spare parser jac-red.ru, asked from here when the configured ones fail, find nothing or are slow (CUB rewrites it in settings).
  * 11) A series' releases show their bitrate: size / running time of the episodes they hold (Lampa shows it only for films).
+ * 12) Spare parser jac-red.ru, asked from here when the configured ones fail, find nothing or are slow (CUB rewrites it in settings).
+ * 13) A pressed release keeps the data TorrServer saved with it (start notes, tor-updater's record) — see keepSaved.
  * Patched: Parser.get callback (merge + rank) and the torrents component's sortWithViewed, which Lampa
  * calls after every sort (components/torrents.js sortResults). Already-opened releases stay pinned on top.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.21.0';
+    window.lampa_tv_ru_torrents = '1.22.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -554,6 +555,37 @@
         torserver.parse.__ruTorrents = true;
     }
 
+    // 13) A release pressed in «Торренты» is added to TorrServer by the core (Torserver.hash / add: action 'add' with the
+    //     data {lampa, movie}). A torrent nobody read for 30 s is no longer active there, and TorrServer gives it the data
+    //     sent instead of the data saved with it, then saves that (MatriX.146 AddTorrent: `if torr.Data == "" { torr.Data =
+    //     data }`): every such press dropped the starts noted there (7) and tor-updater's record — a look at the release
+    //     watched last made «Продолжить» go by an older one. The data sent is now the saved data with Lampa's on top.
+    //     A link with no btih in it (a .torrent file) is added as it is: its hash is known only after the add.
+    function keepSaved(add) {
+        var wrapped = function (object, success, fail) {
+            var self = this, args = arguments, url = torserver.url && torserver.url();
+            var hash = btih({ MagnetUri: object && object.link });
+            if (!url || !hash || !object.data) return add.apply(self, args);
+            var net = new Lampa.Reguest(), sent = false;
+            var go = function (saved) {
+                if (sent) return;
+                sent = true;
+                if (saved) object.data = Object.assign({}, saved, object.data);
+                add.apply(self, args);
+            };
+            net.timeout(3000);
+            net.silent(url.replace(/\/$/, '') + '/torrents', function (list) {
+                var t = (Array.isArray(list) ? list : []).filter(function (x) { return String(x.hash).toLowerCase() === hash; })[0];
+                go(t ? torrentData(t) : null);
+            }, function () { go(null); }, JSON.stringify({ action: 'list' }));
+        };
+        wrapped.__ruTorrents = true;
+        return wrapped;
+    }
+    if (torserver) ['hash', 'add'].forEach(function (name) {
+        if (typeof torserver[name] === 'function' && !torserver[name].__ruTorrents) torserver[name] = keepSaved(torserver[name]);
+    });
+
     var template = Lampa.Template;
     if (template && typeof template.get === 'function' && !template.get.__ruTorrents) {
         var getTemplate = template.get;
@@ -729,7 +761,8 @@
         Lampa.Listener.follow('torrent', function (e) {
             if (e.type === 'onenter' && warm && e.element && e.element.Title !== warm.title) stopWarm();
         });
-        if (Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.follow('start', stopWarm);
+        // 'start' = Lampa's own player; MX and other external players get 'external' (core launchExternalPlayer) and no 'start'
+        if (Lampa.Player && Lampa.Player.listener) ['start', 'external'].forEach(function (name) { Lampa.Player.listener.follow(name, stopWarm); });
 
         // a file list is shown → remember its release for the card (render comes once per file, one write per list);
         // a file is played → remember the file too
