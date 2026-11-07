@@ -12,7 +12,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_similar) return;
-    window.lampa_tv_similar = '1.1.1';
+    window.lampa_tv_similar = '1.1.2';
 
     var IMDB = 'https://caching.graphql.imdb.com/';
     var IMDB_HEADERS = { 'Content-Type': 'application/json', 'x-imdb-client-name': 'imdb-web-next-localized', 'x-imdb-user-country': 'US', 'x-imdb-user-language': 'en-US' };
@@ -153,9 +153,9 @@
 
     // Work only for a viewer who scrolls: the card is complete with its first rows built, and every row Lampa
     // builds after that comes from scrolling (components/full onScroll). Pressing «Смотреть» costs no requests.
-    // The rows of a card seen this session are kept.
+    // The rows of the last DONE_MAX cards seen this session are kept (~50 KB a card).
     var waiting = null;
-    var done = {};
+    var DONE_MAX = 50, done = {};
 
     function start(e) {
         var method = (e.object && e.object.method === 'tv') || e.data.movie.number_of_seasons ? 'tv' : 'movie';
@@ -163,6 +163,8 @@
         if (done[key]) return swap(e, done[key]);
         try {
             build(e, method, function (rows) {
+                var keys = Object.keys(done);
+                if (keys.length >= DONE_MAX) delete done[keys[0]]; // the oldest card (keys keep insertion order)
                 done[key] = rows;
                 try { swap(e, rows); } catch (err) { console.log('Similar', 'swap', err && err.message); }
             });

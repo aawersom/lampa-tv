@@ -18,7 +18,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_catalog_next) return;
-    window.lampa_tv_catalog_next = '1.6.1';
+    window.lampa_tv_catalog_next = '1.6.2';
 
     var AHEAD_ROWS = 6, PAGES = 2;
 
@@ -259,7 +259,16 @@
         var inHistory = {}, have = {};
         history.forEach(function (h) { inHistory[h.id] = 1; });
         list.forEach(function (r) { have[r.id] = 1; });
-        var save = function () { Lampa.Storage.set(RECS, list); Lampa.Storage.set(RECS_DONE, done); };
+        // the fill takes minutes and the core adds its own recommendations meanwhile (a history title every 2 min): the list
+        // saved is the one stored now, with this fill's titles added
+        var save = function () {
+            var now = Lampa.Storage.cache(RECS, RECS_MAX, []), ids = {};
+            now.forEach(function (r) { ids[r.id] = 1; });
+            list.forEach(function (r) { if (!ids[r.id]) { ids[r.id] = 1; now.push(r); } });
+            list = now;
+            Lampa.Storage.set(RECS, list);
+            Lampa.Storage.set(RECS_DONE, done);
+        };
         (function next(i) {
             if (i >= todo.length) return save();
             var h = todo[i], type = kind(h);

@@ -8,8 +8,8 @@ the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa k
 parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
-Versions (2026-11-07, Lampa core 3.4.6): ru-torrents 1.22.0, similar 1.1.1, quick-start 1.11.0, no-dmca 1.1.0, poster-heal 1.4.0,
-no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.0, catalog-next 1.6.1, tor-updater 0.1.6-tv.2, imdb-filter 1.0.3.
+Versions (2026-11-07, Lampa core 3.4.6): ru-torrents 1.23.0, similar 1.1.2, quick-start 1.11.0, no-dmca 1.1.0, poster-heal 1.4.0,
+no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.0, catalog-next 1.6.2, tor-updater 0.1.6-tv.2, imdb-filter 1.0.3.
 Tests: `for f in test/*.cjs; do node $f; done`.
 
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
@@ -57,13 +57,13 @@ Tests: `for f in test/*.cjs; do node $f; done`.
 - `imdb-ratings.js` — poster tiles show the IMDb rating instead of TMDB (asked from IMDb by imdb_id, a row of tiles per request, once more 3 s later if IMDb is silent, no OMDb; TMDB external_ids
   when a list carries no imdb_id; CUB's lagging imdb_rating is shown only until IMDb answers; re-asked daily for titles out less than half a year, every 14 days for others; no number when IMDb is unknown; badge colour by rating: 8+ green, 7 light green, 6 yellow, 5 orange, lower red); on the movie card a known
   IMDb rating is put back when the ratings plugin hides it after a failed lookup; the card shows no TMDB badge.
-- `tmdb-route.js` — TMDB API from a host this network can reach: every TMDB API request (Lampa's own and plugins' hardcoded
-  api.themoviedb.org URLs, $.ajax and the Android app's native requests) goes to the host picked by asking lampa.byskaz.ru/tmdb/api →
+- `tmdb-route.js` — TMDB API from a host this network can reach: every TMDB API request made through Lampa's request object (Lampa's own and
+  plugins' hardcoded api.themoviedb.org URLs, by $.ajax or the Android app's native request; a plugin's own raw $.ajax is not seen) goes to the host picked by asking lampa.byskaz.ru/tmdb/api →
   tmdb-api.rootu.top → tmdbapi.bylampa.online → apitmdb.cub.best → api.themoviedb.org in turn (TMDB itself last: from the TV line it answers, then refuses) (not apitmdb.cub.black: cache-only, redirects misses to the blocked TMDB); picked again at start, when the network returns, when Lampa is visible
   again and after a failed TMDB request (next host first, at most every 30 s). A CUB card whose details CUB's own proxy fails to give (it answered 5 of 12 from the TV line) is asked once more, then loaded from TMDB.
 - `catalog-next.js` — card-grid lists («Ещё», filter results, «Рекомендуем», «Релизы», «Избранное»/«История», «Подписки»…) load ahead: two pages as soon as the list opens, and two more whenever the focus gets
   within 6 rows of the last loaded row (fixes Lampa's list stalling at the end of page 1 when scrolled through quickly:
-  its scroll asks for a page only when it moves, and ignores the first second); a title CUB sends again on a later page is not shown twice. Main page: own «Продолжить просмотр» first, no IPTV row; «Огонь!» goes on after CUB's 100 titles with TMDB's popular well-rated ones of the last years (~650 films / ~650 series); «Рекомендуем посмотреть» keeps 600 recommendations instead of Lampa's 100 and fills them for the whole history after start; search puts the exact title first.
+  its scroll asks for a page only when it moves, and ignores the first second); a title CUB sends again on a later page is not shown twice. Main page: own «Продолжить просмотр» first, Lampa's copy and the IPTV channels row of the same title dropped; «Огонь!» goes on after CUB's 100 titles with TMDB's popular well-rated ones of the last years (~650 films / ~650 series); «Рекомендуем посмотреть» keeps 600 recommendations instead of Lampa's 100 and fills them for the whole history after start; search puts the exact title first.
 - `tor-updater.js` — a copy of WatherMG's [Lampa Tor Updater](https://github.com/WatherMG/lampa-tor-updater) v0.1.6 (MIT), used instead of
   the original, with two fixes. `episodeMap`: the original deep-copied Lampa's episode-list files through JSON; each file carries the card and the
   shared playlist (every entry with the card again), so a 73-episode list became tens of MB of JSON and the WebView renderer crashed ~3 s after
