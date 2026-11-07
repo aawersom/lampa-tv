@@ -1,17 +1,20 @@
 /* Lampa Tor Updater v0.1.6 | built 2026-10-03T00:13:11.316Z | https://github.com/WatherMG/lampa-tor-updater */
 /*
- * Owner's TV copy (MIT, © 2026 WatherMG): the original v0.1.6 with two fixes, marked «tv fix».
+ * Owner's TV copy (MIT, © 2026 WatherMG): the original v0.1.6 with three fixes, marked «tv fix».
  * 1) episodeMap. Lampa gives every file of the episode list its card and the shared playlist, where each entry holds the
  *    card again. The original deep-copied that list through JSON: files² cards (73 episodes of Game of Thrones → hundreds
  *    of MB), and the WebView renderer died ~3 s after the list opened (owner's TV, 2026-10-18). Only id/path/length are needed.
  * 2) writeFollow. The update check reads the torrent, searches the parsers for seconds, then writes the data it read;
  *    a file started meanwhile had its start noted there by ru-torrents (lampa_tv_play) — lost, and the next «Продолжить»
  *    went by an older start. The record is now written into the data as TorrServer has it at that moment.
+ * 3) applyUpdate. The new release got the old one's data as read before the probe (seconds earlier), and ru-torrents' start
+ *    record in it named the OLD torrent's file indexes: «Продолжить» could start another episode. It is now read right before
+ *    the add and moved to the new file ids by season/episode (carryPlay).
  */
 (function () {
     'use strict'
 
-    const VERSION = '0.1.6-tv.2'
+    const VERSION = '0.1.6-tv.3'
     const BUILD_DATE = '2026-10-03T00:13:11.316Z'
     const COMPONENT = 'tor_updater'
     const FOLLOW_KEY = 'torrent_follow'
@@ -766,6 +769,20 @@
         }
     }
 
+    // tv fix 3: ru-torrents' start record { file, at, eps: [[id, season, episode]…] } of the old release, in the new release's
+    // file ids (by season/episode); its episode list becomes the new release's. Not placeable there → null (not carried).
+    function carryPlay(play, oldMap, newMap) {
+        if (!play || !oldMap || !newMap) return null
+        let key = ''
+        oldMap.forEach((v, k) => { if (v.id === play.file) key = k })
+        const now = key && newMap.get(key)
+        if (!now) return null
+        const eps = Array.from(newMap.values())
+            .sort((a, b) => a.season - b.season || a.episode - b.episode)
+            .map((v) => [v.id, v.season, v.episode])
+        return Object.assign({}, play, { file: now.id, eps })
+    }
+
     async function transferViewed(oldHash, newHash, oldMap, newMap) {
         let viewed = []
         try { viewed = await ts.viewed(oldHash) } catch (_) { return }
@@ -860,6 +877,14 @@
             poster: freshPoster || (currentProbe.status && currentProbe.status.poster) || oldStatus.poster || '',
             category: (currentProbe.status && currentProbe.status.category) || oldStatus.category || (isTv(movie) ? 'tv' : 'movie')
         }
+
+        // tv fix 3: ru-torrents' start record goes to the new release as the old one has it NOW (the probe took seconds), with
+        // the new release's file ids — copied as it was, it named old file indexes and «Продолжить» could start another episode
+        delete newData.lampa_tv_play
+        try {
+            const carried = carryPlay(torrentData(await ts.get(oldHash)).lampa_tv_play, currentProbe.oldMap, currentProbe.newMap)
+            if (carried) newData.lampa_tv_play = carried
+        } catch (_) {}
 
         await ts.add(link, meta, persist, newData)
         const newStatus = await waitForFiles(newHash)
