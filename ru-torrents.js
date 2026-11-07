@@ -27,7 +27,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.22.0';
+    window.lampa_tv_ru_torrents = '1.23.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -106,9 +106,12 @@
             if (!h) { out.push(x); return; }
             var base = seen[h];
             if (!base) { seen[h] = x; out.push(x); return; }
-            var tr = trackers(base);
-            trackers(x).forEach(function (t) { if (tr.indexOf(t) < 0) tr.push(t); });
-            base.Tracker = tr.join(', ');
+            // the trackers' own spelling: Lampa's filter menu tells «RuTracker» from «rutracker»
+            var names = String(base.Tracker || '').split(/\s*[,|;]\s*/).filter(Boolean), tr = trackers(base);
+            String(x.Tracker || '').split(/\s*[,|;]\s*/).filter(Boolean).forEach(function (n) {
+                if (tr.indexOf(n.toLowerCase()) < 0) { tr.push(n.toLowerCase()); names.push(n); }
+            });
+            base.Tracker = names.join(', ');
             // one swarm: TorrServer gets the announce URLs of both copies (more trackers → more peers found)
             var ann = announces(base.MagnetUri);
             announces(x.MagnetUri).forEach(function (a) {
@@ -147,7 +150,7 @@
         return {
             df: o, df_year: o + ' ' + year, df_lg: o + ' ' + t, df_lg_year: o + ' ' + t + ' ' + year,
             lg: t, lg_year: t + ' ' + year, lg_df: t + ' ' + o, lg_df_year: t + ' ' + o + ' ' + year
-        }[Lampa.Storage.field('parse_lang')];
+        }[Lampa.Storage.field('parse_lang')] || o || t;
     }
 
     // 5) Warm-up. Pressing a release makes Lampa add its magnet to TorrServer and ask for the file list every 2 s; for a
@@ -188,8 +191,10 @@
             w.title = String(t.title || '').replace(/^\[LAMPA\]\s*/, '');
             send({ action: 'get', hash: hash });
             keep();
-        }, function () {
-            if (warm !== w) return;
+        }, function (failed) {
+            // TorrServer's list did not answer: the card may well have a release there, and an add over a resting one replaces
+            // its saved data (see 13) — no warm-up then
+            if (warm !== w || failed) return stopWarm();
             var last = lastOpened(card), view = Lampa.Storage.get('torrents_view', '[]') || [];
             var best = null, pos = -1;
             json.Results.forEach(function (r) {
@@ -261,13 +266,17 @@
     }
     // only the starts noted in TorrServer pick the release: the localStorage record alone was once found pointing to a
     // release not watched (TV 2026-10-28) — it only tells the file of that same release
+    // A release tor-updater replaced (torrent_follow.superseded_by) stays until its cleanup with the same start record as the
+    // one that replaced it (copied over): on equal times the live one wins, then the newer.
     function pickRelease(list, card) {
         var started = null, newest = null;
+        var rank = function (t) { var f = torrentData(t).torrent_follow; return [(torrentData(t)[PLAY_KEY] || {}).at || 0, f && f.superseded_by ? 0 : 1, t.timestamp || 0]; };
+        var later = function (a, b) { var x = rank(a), y = rank(b); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; };
         (Array.isArray(list) ? list : []).forEach(function (t) {
             var d = torrentData(t), m = d.movie, at = (d[PLAY_KEY] || {}).at || 0;
             if (!m || m.id != card.id || !!m.name !== !!card.name) return;
             if (!newest || t.timestamp > newest.timestamp) newest = t;
-            if (at && (!started || at > torrentData(started)[PLAY_KEY].at)) started = t;
+            if (at && (!started || later(t, started) > 0)) started = t;
         });
         return started || newest;
     }
@@ -280,7 +289,7 @@
             var local = lastRecord(card), t = pickRelease(list, card);
             if (t) done(String(t.hash).toLowerCase(), t, lastStart(t, local));
             else if (none) none();
-        }, function () { if (none) none(); }, JSON.stringify({ action: 'list' }));
+        }, function () { if (none) none(true); }, JSON.stringify({ action: 'list' }));
     }
     // a file of a release started from Lampa → its start goes into the release's data in TorrServer (merged: Lampa keeps
     // the card there, tor-updater its follow record)
@@ -347,7 +356,12 @@
             };
             relabel(hash, rec0);
             btn.on('hover:focus', function () { continueRelease(card, function (h, t, rec) { relabel(h, rec); }); });
+            var busy = 0;
             btn.on('hover:enter', function () {
+                // the release opens after two TorrServer answers; a second OK meanwhile opened it twice, and the core's file
+                // polling of the first open was left running (it rebuilt the list and started the episode again every 2 s)
+                if (busy && Date.now() - busy < 10000) return;
+                busy = Date.now();
                 // the mark travels with this very open (Lampa hands this object to the file list) and never gets saved;
                 // file/at = the file started last from Lampa and when; `opened` = files TorrServer streamed since then.
                 // Lampa learns a position only when MX is left with «Назад» — a session ended by switching the TV off /
@@ -362,6 +376,7 @@
                         console.log('RuTorrents', 'continue', card.id, h.slice(0, 8), rec.at ? 'file ' + rec.file + ' started ' + new Date(rec.at).toISOString() : 'no start known', 'streamed', opened.join(','));
                         Object.defineProperty(movie, 'lampa_tv_play', { value: { file: rec.at ? rec.file : undefined, at: rec.at || undefined, opened: opened } });
                         Lampa.Torrent.open(h, movie);
+                        busy = 0; // the core's loading screen has the remote now
                     });
                 };
                 continueRelease(card, start, function () { start(hash, t0, rec0); });
@@ -400,7 +415,8 @@
             var torrents = params && params.title === Lampa.Lang.translate('settings_rest_source') && (params.items || []).filter(function (it) {
                 return it.btn && it.btn.hasClass && it.btn.hasClass('view--torrent');
             })[0];
-            if (torrents) return torrents.btn.trigger('hover:enter');
+            // through the menu's own onSelect: it hands the button the watch context (the season of an episode's «Смотреть»)
+            if (torrents) return params.onSelect ? params.onSelect(torrents) : torrents.btn.trigger('hover:enter');
             filterOrder(params && params.items);
         } catch (err) { console.log('RuTorrents', 'play menu', err && err.message); }
         return showSelect.apply(this, arguments);
@@ -561,15 +577,18 @@
     //     data }`): every such press dropped the starts noted there (7) and tor-updater's record — a look at the release
     //     watched last made «Продолжить» go by an older one. The data sent is now the saved data with Lampa's on top.
     //     A link with no btih in it (a .torrent file) is added as it is: its hash is known only after the add.
+    //     «Назад» on Lampa's loading screen meanwhile (core close: Torserver.clear()) drops the add, as it dropped Lampa's own.
+    var clears = 0;
     function keepSaved(add) {
         var wrapped = function (object, success, fail) {
             var self = this, args = arguments, url = torserver.url && torserver.url();
             var hash = btih({ MagnetUri: object && object.link });
             if (!url || !hash || !object.data) return add.apply(self, args);
-            var net = new Lampa.Reguest(), sent = false;
+            var net = new Lampa.Reguest(), sent = false, gen = clears;
             var go = function (saved) {
                 if (sent) return;
                 sent = true;
+                if (clears !== gen) return;
                 if (saved) object.data = Object.assign({}, saved, object.data);
                 add.apply(self, args);
             };
@@ -585,6 +604,11 @@
     if (torserver) ['hash', 'add'].forEach(function (name) {
         if (typeof torserver[name] === 'function' && !torserver[name].__ruTorrents) torserver[name] = keepSaved(torserver[name]);
     });
+    if (torserver && typeof torserver.clear === 'function' && !torserver.clear.__ruTorrents) {
+        var clearTs = torserver.clear;
+        torserver.clear = function () { clears++; return clearTs.apply(this, arguments); };
+        torserver.clear.__ruTorrents = true;
+    }
 
     var template = Lampa.Template;
     if (template && typeof template.get === 'function' && !template.get.__ruTorrents) {
@@ -739,14 +763,22 @@
         };
 
         // the card opened → ask the parsers what its «Торренты» button will ask (components/full start.js)
+        // The answer warms the card's release only while the card is still open: it may come after the viewer left (the
+        // parsers take seconds), and a warm-up then stopped the next card's and kept a release alive for 20 min.
+        // An answer that never comes (Parser.clear() of a search drops it — «искать торренты в поиске» is on) must not hold
+        // «Торренты»: past the parsers' own time, the spare's and a margin, it counts as failed and «Торренты» asks again.
+        var openCards = {};
         Lampa.Listener.follow('full', function (e) {
             if (e.type !== 'complite' || !e.data || !e.data.movie || !Lampa.Storage.field('parser_use')) return;
             var card = e.data.movie;
+            openCards[card.id] = (openCards[card.id] || 0) + 1;
             var params = { url: '', component: 'torrents', search: buttonSearch(card), search_one: card.title, search_two: card.original_title, movie: card, page: 1 };
             var p = prefetched = { key: searchKey(params), id: card.id, time: Date.now(), done: false, json: null, waiters: [] };
+            setTimeout(function () { if (!p.done) finish(p); }, SPARE_AFTER + 2000 * (parseInt(Lampa.Storage.field('parse_timeout'), 10) || 15) + 5000);
             run(params, function (json) {
                 p.json = json;
                 finish(p);
+                if (!openCards[card.id]) return;
                 try { warmUp(card, json); } catch (err) { console.log('RuTorrents', 'warm-up error', err && err.message); }
             }, function () { finish(p); });
         });
@@ -754,6 +786,7 @@
         // the card closed (back from it, not into its torrents) → drop its answer and its warm-up
         Lampa.Listener.follow('activity', function (e) {
             if (e.type !== 'destroy' || e.component !== 'full' || !e.object) return;
+            if (openCards[e.object.id] && !--openCards[e.object.id]) delete openCards[e.object.id];
             if (prefetched && e.object.id == prefetched.id) prefetched = null;
             if (warm && e.object.id == warm.id) stopWarm();
         });
