@@ -80,6 +80,8 @@ Tests: `for f in test/*.cjs; do node $f; done`.
   `adb shell 'setsid nohup sh /data/local/tmp/ts-watchdog.sh >/dev/null 2>&1 &'`; needs the static curl in /data/local/tmp). Once the
   torrserver process dies, the TorrServe app never starts it again (its shell job stays set), so Lampa cannot connect until the app is
   restarted. Every 30 s it asks 127.0.0.1:8090/echo; after two misses it restarts the app, closes the app's window with Back and logs the
-  system's recent kill lines to /data/local/tmp/ts-watchdog.log. Lives until the TV reboots (TorrServe starts its server on boot by itself).
+  system's recent kill lines to /data/local/tmp/ts-watchdog.log. A restart that does not help doubles the wait (up to 30 min); without
+  the curl it stops instead of restarting a working server every minute (`node test/ts-watchdog.test.cjs`, needs Git Bash).
+  Lives until the TV reboots (TorrServe starts its server on boot by itself).
   Also needed once: `adb shell pm grant ru.yourok.torrserve android.permission.WRITE_SECURE_SETTINGS` — with the app's «accessibility»
   option on and no such permission it opens the TV's accessibility settings at every server start and its keep-alive service stays off.
