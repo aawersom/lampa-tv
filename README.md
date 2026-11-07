@@ -54,9 +54,11 @@ no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.0, catalog-next 1.6.1, 
   within 6 rows of the last loaded row (fixes Lampa's list stalling at the end of page 1 when scrolled through quickly:
   its scroll asks for a page only when it moves, and ignores the first second); a title CUB sends again on a later page is not shown twice. Main page: own «Продолжить просмотр» first, no IPTV row; «Огонь!» goes on after CUB's 100 titles with TMDB's popular well-rated ones of the last years (~650 films / ~650 series); «Рекомендуем посмотреть» keeps 600 recommendations instead of Lampa's 100 and fills them for the whole history after start; search puts the exact title first.
 - `tor-updater.js` — a copy of WatherMG's [Lampa Tor Updater](https://github.com/WatherMG/lampa-tor-updater) v0.1.6 (MIT), used instead of
-  the original: one fix in `episodeMap`. The original deep-copied Lampa's episode-list files through JSON; each file carries the card and the
+  the original, with two fixes. `episodeMap`: the original deep-copied Lampa's episode-list files through JSON; each file carries the card and the
   shared playlist (every entry with the card again), so a 73-episode list became tens of MB of JSON and the WebView renderer crashed ~3 s after
-  the list opened. Now only id/path/length are copied. If upstream fixes it, go back to the original URL.
+  the list opened. Now only id/path/length are copied. `writeFollow`: the update check (every 6 h per release, when its list opens) wrote the
+  torrent's data it had read before searching the parsers, dropping the start ru-torrents noted there meanwhile (`node test/tor-updater-follow.test.cjs`);
+  now it writes into the data TorrServer has at that moment. If upstream fixes both, go back to the original URL.
 - `imdb-filter.js` — Lampa's «Фильтр» by IMDb: CUB filters by the TMDB rating and only «от 8» works there (от 6/7 return everything,
   ranges are ignored; 2023 «от 8» = 17 films), while tiles and the card show IMDb. The filter runs on IMDb's advanced search (IMDb rating,
   votes, release dates, genres, original language, title type; by popularity, «В топе» = best rated with ≥ 25 000 votes, «Новинки» = newest

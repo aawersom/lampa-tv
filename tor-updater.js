@@ -1,14 +1,17 @@
 /* Lampa Tor Updater v0.1.6 | built 2026-10-03T00:13:11.316Z | https://github.com/WatherMG/lampa-tor-updater */
 /*
- * Owner's TV copy (MIT, © 2026 WatherMG): the original v0.1.6 with one fix, marked «tv fix» in episodeMap.
- * Lampa gives every file of the episode list its card and the shared playlist, where each entry holds the card again.
- * The original deep-copied that list through JSON: files² cards (73 episodes of Game of Thrones → hundreds of MB),
- * and the WebView renderer died ~3 s after the list opened (owner's TV, 2026-10-18). Only id/path/length are needed.
+ * Owner's TV copy (MIT, © 2026 WatherMG): the original v0.1.6 with two fixes, marked «tv fix».
+ * 1) episodeMap. Lampa gives every file of the episode list its card and the shared playlist, where each entry holds the
+ *    card again. The original deep-copied that list through JSON: files² cards (73 episodes of Game of Thrones → hundreds
+ *    of MB), and the WebView renderer died ~3 s after the list opened (owner's TV, 2026-10-18). Only id/path/length are needed.
+ * 2) writeFollow. The update check reads the torrent, searches the parsers for seconds, then writes the data it read;
+ *    a file started meanwhile had its start noted there by ru-torrents (lampa_tv_play) — lost, and the next «Продолжить»
+ *    went by an older start. The record is now written into the data as TorrServer has it at that moment.
  */
 (function () {
     'use strict'
 
-    const VERSION = '0.1.6-tv.1'
+    const VERSION = '0.1.6-tv.2'
     const BUILD_DATE = '2026-10-03T00:13:11.316Z'
     const COMPONENT = 'tor_updater'
     const FOLLOW_KEY = 'torrent_follow'
@@ -484,6 +487,9 @@
     }
 
     async function writeFollow(status, patch) {
+        // tv fix 2: the record goes into the data as it is now — the update check writes seconds after reading (parser search),
+        // and a file started meanwhile has its start noted there by ru-torrents (lampa_tv_play), which the old data dropped
+        try { status = (await ts.get(status.hash)) || status } catch (_) {}
         const data = torrentData(status)
         const current = data[FOLLOW_KEY] || {}
         data[FOLLOW_KEY] = Object.assign({}, current, patch, { version: FOLLOW_VERSION })
