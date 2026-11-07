@@ -8,8 +8,9 @@ the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa k
 parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
-Versions on the TV (2026-10-27): ru-torrents 1.16.0, similar 1.1.0, quick-start 1.6.1, no-dmca 1.1.0, poster-heal 1.4.0,
-no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.0, catalog-next 1.6.1, tor-updater 0.1.6-tv.1, imdb-filter 1.0.3.
+Versions (2026-11-07, Lampa core 3.4.6): ru-torrents 1.22.0, similar 1.1.1, quick-start 1.11.0, no-dmca 1.1.0, poster-heal 1.4.0,
+no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.0, catalog-next 1.6.1, tor-updater 0.1.6-tv.2, imdb-filter 1.0.3.
+Tests: `for f in test/*.cjs; do node $f; done`.
 
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
   whatever sort is chosen in «Сортировать», Russian releases come first, then the rest; inside each group
@@ -20,9 +21,15 @@ no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.0, catalog-next 1.6.1, 
   The release last opened for that card is added to TorrServer while the card is open (kept alive until the card closes, another release
   is pressed or 20 min pass), so pressing it lists the episodes at once: Game of Thrones 1-8 (243 GB) 12.2 s → 2.2 s on the TV.
   A card whose film/series was opened before (TorrServer keeps the release with its card) gets «Продолжить» next to «Смотреть»:
-  plays at once — the episode to watch (in progress, else the next) or the film's file played last — from the release whose files were
-  opened last for that card (any path), instead of «Смотреть» → «Торренты» → release → file;
-  the warm-up uses the same record.
+  plays at once — the episode to watch (in progress, else the next) or the film's file played last — from the release a file was
+  started from last (every start from Lampa is noted in that release's own data in TorrServer; none noted → TorrServer's newest of the
+  card), instead of «Смотреть» → «Торренты» → release → file; the button says what it plays («Продолжить · S2E5 · 14:20»);
+  the warm-up uses the same release. A pressed release keeps the data TorrServer saved with it (TorrServer gives a resting torrent
+  the data of Lampa's add instead — the start notes went with it; `node test/ru-torrents-boot.test.cjs`).
+  Card buttons: «Смотреть» opens «Торренты» at once, the online source gets its own «Онлайн» button, no «Подписаться» bell.
+  Spare parser: jac-red.ru is asked through Lampa's own Jackett request when the configured parsers fail, find nothing or are silent
+  6 s (CUB's «engineer» module rewrites it in the settings at every start); one answer reaches Lampa.
+  A series' release shows its bitrate: size / running time of the episodes its title says it holds (TMDB season times).
   Lampa's filter menu is built from only the releases that add a voice, tracker or season to it (same menu): opening «Торренты»
   with 880 releases no longer freezes the screen for 1 s (`node test/filter-menu.test.cjs` checks the menu stays the same).
   Filter: Качество, then Сезон — in the menu and in the chosen values next to «Фильтр» (Lampa cuts those at 25 characters).
@@ -34,6 +41,10 @@ no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.0, catalog-next 1.6.1, 
   «Зрители IMDb смотрят также» (IMDb «More like this»); «Коллекция» unchanged; no title shown twice.
 - `quick-start.js` — a film's file starts at once (no 10 s countdown; film/series taken from the card, not the file name);
   in a series the focus goes to the next episode; Lampa stops waiting for TorrServer's preload once ~10 s of that video are buffered.
+  A list opened by «Продолжить» plays at once: the episode started last (or the one MX went on to), unless a newer mark says it was
+  finished. MX resumes from its own place when it streamed that very file last (the Lampa app is told the timecode mode «ask» for that
+  one start, through its bridge; the owner's setting is never written). MX titles episodes «Сезон 1 Серия 2: Название». «История»
+  opens cards again (Lampa 3.4's panel screen is bypassed). The screensaver's video releases the hardware decoder when it stops.
 - `no-dmca.js` — no content restrictions: cards blocked «по требованию правообладателя» open (Lampa's blocked-id list is ignored, a CUB stub
   is replaced with the card details from TMDB); the LGBT filter is off (its list is never loaded).
 - `poster-heal.js` — each poster always from one of two hosts that let the WebView cache it for a year (nl/de.imagetmdb.com, chosen by

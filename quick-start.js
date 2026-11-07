@@ -12,12 +12,12 @@
  *    from Lampa's last mark of it. No record of the start in that release: the latest file TorrServer streamed.
  * 4) Lampa's video screensaver releases the hardware video decoder when it closes (it kept it, see below).
  * 5) «История» is the bookmark list again (Lampa 3.4 with CUB sync made it a screen of panels): OK opens the card.
- * 7) MX resumes from its own place (saved at every stop — TV off, «Домой» too) when it played this very file last: for that
- *    start the Lampa app is told the timecode mode «ask», which hands MX no position; every other start, the owner's
- *    own mode. Lampa's setting itself is never written.
  * 6) MX shows «Сезон 1 Серия 2: Название» for an episode. The core hands the external player only the episode's
  *    name (title = fname), so MX never said which season/episode plays. Every playlist entry is labelled too,
  *    so the title stays right when MX moves to the next file on its own.
+ * 7) MX resumes from its own place (saved at every stop — TV off, «Домой» too) when it played this very file last: for that
+ *    start the Lampa app is told the timecode mode «ask», which hands MX no position; every other start, the owner's
+ *    own mode. Lampa's setting itself is never written.
  */
 (function () {
     'use strict';
