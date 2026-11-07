@@ -63,3 +63,10 @@ no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.0, catalog-next 1.6.1, 
   with ≥ 5 000; lower bars for languages with a small IMDb audience) and each title becomes a TMDB card carrying its IMDb rating
   (2023 «от 8»: 228 films, «от 7»: 1033). The rating menu gets IMDb steps. CUB-only options (high quality, age rating, ongoing) keep
   CUB's list with the rating applied to its IMDb field.
+- `tv/ts-watchdog.sh` — not a plugin: a watchdog run on the TV through adb (`adb push tv/ts-watchdog.sh /data/local/tmp/` and
+  `adb shell 'setsid nohup sh /data/local/tmp/ts-watchdog.sh >/dev/null 2>&1 &'`; needs the static curl in /data/local/tmp). Once the
+  torrserver process dies, the TorrServe app never starts it again (its shell job stays set), so Lampa cannot connect until the app is
+  restarted. Every 30 s it asks 127.0.0.1:8090/echo; after two misses it restarts the app, closes the app's window with Back and logs the
+  system's recent kill lines to /data/local/tmp/ts-watchdog.log. Lives until the TV reboots (TorrServe starts its server on boot by itself).
+  Also needed once: `adb shell pm grant ru.yourok.torrserve android.permission.WRITE_SECURE_SETTINGS` — with the app's «accessibility»
+  option on and no such permission it opens the TV's accessibility settings at every server start and its keep-alive service stays off.
