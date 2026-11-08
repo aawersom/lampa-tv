@@ -3,9 +3,12 @@
  * 1) File list: a film (one video file, or one file holding ≥ 85% of the video bytes — the rest are samples/extras)
  *    starts at once instead of Lampa's 10-second countdown; in a series the focus goes to the episode to watch next
  *    (the one watched last if unfinished, else the next one; nothing watched → the first) — the choice stays with the viewer.
+ *    Lampa's marks lag when Lampa never heard back from MX; once TorrServer answers, a list opened by hand moves the focus
+ *    to the episode «Продолжить» would play (its start record and the files streamed since — see 3).
  * 2) Preload: Lampa waits until TorrServer has PreloadCache % of its cache (one size for every file). Here the wait
  *    ends once ~10 seconds of THIS video are buffered (file size / runtime × 10 s); never more than TorrServer's own
- *    preload size. Done by trimming `preload_size` in TorrServer's `&stat` answers that Lampa polls (torrent.js preload).
+ *    preload size. A start that resumes mid-file waits for the first bytes only: MX reads from its place, not the start.
+ *    Done by trimming `preload_size` in TorrServer's `&stat` answers that Lampa polls (torrent.js preload).
  * 3) A list opened by «Продолжить» (ru-torrents, marked lampa_tv_play) plays at once: the episode chosen as in 1), or the film
  *    file played last; nothing to choose (all watched, several equal files never played) → the list stays. A session that
  *    ended without «Назад» in MX left Lampa no marks: then the episode started last (or the one MX went on to) plays,
@@ -22,7 +25,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.11.0';
+    window.lampa_tv_quick_start = '1.12.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -113,13 +116,60 @@
         if (e.type === 'list_open') {
             rendered = [];
             // list_open is sent before the list is built; the whole build is synchronous, so the next tick sees it finished
-            var movie = e.params && e.params.movie;
-            setTimeout(function () { try { choose(rendered.slice(), movie); } catch (err) { console.log('QuickStart', err && err.message); } }, 0);
+            var movie = e.params && e.params.movie, rows = rendered;
+            setTimeout(function () {
+                try {
+                    choose(rows.slice(), movie);
+                    if (!(movie && movie.lampa_tv_play)) focusByFacts(rows, movie);
+                } catch (err) { console.log('QuickStart', err && err.message); }
+            }, 0);
         } else if (e.type === 'render') {
             rendered.push({ item: e.item, element: e.element });
             if (rendered.length === 1 && e.element && e.element.torrent_hash) learnStreamed(e.element.torrent_hash, e.params && e.params.movie);
         }
     });
+
+    // A series list opened BY HAND is focused by Lampa's marks first — they stop where Lampa last heard back from MX: Android
+    // drops Lampa in the background during a long MX session (its answer then goes to nobody), TV off, the screensaver
+    // (TV 2026-11-08: the list stood on S6E1, MX had played up to S6E5). TorrServer knows what was played: the start record
+    // ru-torrents keeps in the release's data and the files streamed since. Once it answers, the focus moves to the episode
+    // «Продолжить» would play — the focus only; not when the viewer has moved it, the list is closed, or another release
+    // of the card was started later (this one's facts are older than the marks then).
+    function focusByFacts(rows, movie) {
+        var first = rows[0] && rows[0].element, url = Lampa.Torserver && Lampa.Torserver.url && Lampa.Torserver.url();
+        if (!url || !first || !first.torrent_hash || !movie || !(movie.name || movie.number_of_seasons) || !Lampa.Modal || !Lampa.Modal.scroll) return;
+        var hash = String(first.torrent_hash).toLowerCase(), base = url.replace(/\/$/, ''), net = new Lampa.Reguest();
+        var was = pickEpisode(rows).target; // what choose() focused
+        // TorrServer, which has just sent the list, answers in tens of ms; a later answer may find the viewer already past
+        // the list (OK pressed, the episode starting) — the focus is not moved then
+        var shown = Date.now();
+        net.timeout(1000);
+        net.silent(base + '/torrents', function (all) {
+            var rec = startOf(all, hash, movie);
+            if (!rec || !was) return;
+            net.silent(base + '/viewed', function (viewed) {
+                if (Date.now() - shown > 1000 || rows !== rendered || Lampa.Controller.enabled().name !== 'modal' || !was.item.hasClass('focus')) return;
+                var opened = (Array.isArray(viewed) ? viewed : []).map(function (v) { return v.file_index; });
+                var target = pickEpisode(rows, { file: rec.file, at: rec.at, opened: opened }).target;
+                if (!target || target === was) return;
+                console.log('QuickStart', 'list → S' + target.element.season + 'E' + target.element.episode, 'file ' + target.element.id, '(TorrServer: started ' + rec.file + ', streamed ' + opened.join(',') + '; Lampa marks said S' + was.element.season + 'E' + was.element.episode + ')');
+                Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
+            }, function () {}, JSON.stringify({ action: 'list', hash: hash }));
+        }, function () {}, JSON.stringify({ action: 'list' }));
+    }
+    // { file, at } of the last start of this release from Lampa (ru-torrents lampa_tv_play), unless another release of the
+    // same card was started later
+    function startOf(all, hash, movie) {
+        var mine = null, others = 0; // the latest start of the card's other releases
+        (Array.isArray(all) ? all : []).forEach(function (t) {
+            var d;
+            try { d = (typeof t.data === 'string' ? JSON.parse(t.data || '{}') : t.data) || {}; } catch (err) { d = {}; }
+            var rec = d.lampa_tv_play, at = rec && rec.at || 0;
+            if (String(t.hash).toLowerCase() === hash) mine = at ? rec : null;
+            else if (d.movie && d.movie.id == movie.id && !!d.movie.name === !!movie.name && at > others) others = at;
+        });
+        return mine && mine.at >= others ? mine : null; // equal: a release tor-updater replaced carries the same record
+    }
 
     // for ru-torrents: the button «Продолжить» says which episode it plays (same choice as the list makes)
     window.lampa_tv_pick_episode = pickEpisode;
@@ -170,7 +220,20 @@
         return min * 60;
     }
 
+    // MX starts mid-file — at Lampa's mark, or at its own place (7) — and asks TorrServer for that place itself: the file's
+    // start is not what it reads. Only the first bytes are waited for then (the release delivers at all). TV 2026-11-08:
+    // after the nightly reboot TorrServer was cold, «Продолжить» stood 44 s on «8 / 241 · 676 Кбит/с» loading S6E5's
+    // first seconds, and MX began at 44:09.
+    function resumes(url) {
+        var hash = String((/[?&]link=([^&]+)/.exec(url) || [])[1]).toLowerCase(), idx = parseInt((/[?&]index=(\d+)/.exec(url) || [])[1], 10);
+        var el = rendered.map(function (r) { return r.element; }).filter(function (d) { return d && d.id === idx && String(d.torrent_hash).toLowerCase() === hash; })[0];
+        var tl = el && el.timeline || {};
+        if (!el || Lampa.Storage.field('player_timecode') !== 'continue' || (tl.percent || 0) >= 90) return false;
+        return tl.time > 0 || mxHasPlace(el);
+    }
+
     function enough(stat, url) {
+        if (resumes(url)) return 1;
         var idx = parseInt((/[?&]index=(\d+)/.exec(url) || [])[1], 10);
         var file = (stat.file_stats || []).filter(function (f) { return f.id === idx; })[0];
         var sec = runtimeSeconds();
