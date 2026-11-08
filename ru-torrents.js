@@ -15,6 +15,8 @@
  *    files at once (see warmUp).
  * 6) The filter menu is worked out here and handed to Lampa in a few stand-in releases — no freeze on a long list (see filterMenu).
  * 7) «Продолжить» on the card of a film/series opened before: plays the release used last at once (quick-start picks the file).
+ * 7a) At Lampa start, a series' marks catch up with what MX played (Lampa missed it): episodes MX went past are marked
+ *     watched, and the home tile's «last watched» names the episode «Продолжить» plays.
  * 8) Card buttons: «Смотреть» → «Торренты», «Онлайн» button, no subscribe bell.
  * 9) Filter: Качество, then Сезон — in the menu and in the chosen values next to «Фильтр».
  * 10) Episode list: «S01/101 Name.mkv» (season folder, episode ×100) read as S1E1; names without TMDB are clean and alike.
@@ -27,7 +29,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.23.0';
+    window.lampa_tv_ru_torrents = '1.24.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -320,18 +322,70 @@
     function continueLabel(card, rec, opened) {
         var pick = window.lampa_tv_pick_episode;
         if (!pick || !card.name || !rec || !rec.at || !rec.eps || !rec.eps.length) return '';
-        var title = card.original_title || card.original_name;
-        var rows = rec.eps.map(function (x) {
-            var h = Lampa.Utils.hash([x[1], x[1] > 10 ? ':' : '', x[2], title].join(''));
-            return { element: { id: x[0], season: x[1], episode: x[2], timeline: Lampa.Timeline.view(h) } };
-        });
-        var p = pick(rows, { file: rec.file, at: rec.at, opened: opened || [] }), el = p.target && p.target.element;
+        var p = pick(episodeRows(card, rec), { file: rec.file, at: rec.at, opened: opened || [] }), el = p.target && p.target.element;
         if (!el) return '';
         // MX resumes from its own place when it streamed this very file last (quick-start 7) — Lampa's time would be off
         var tl = el.timeline || {}, mx = (opened || []).concat([rec.file]).indexOf(el.id) >= 0 && (tl.percent || 0) < 90 && !(!tl.percent && tl.updated);
         var time = !mx && tl.time > 0 ? ' · ' + clock(tl.time) : '';
         return 'S' + el.season + 'E' + el.episode + time;
     }
+    // the release's episodes noted at its last start, in list order, with Lampa's marks (under the card's key, as the core's list)
+    function episodeRows(card, rec) {
+        var title = card.original_title || card.original_name;
+        return rec.eps.map(function (x) {
+            var h = Lampa.Utils.hash([x[1], x[1] > 10 ? ':' : '', x[2], title].join(''));
+            return { element: { id: x[0], season: x[1], episode: x[2], timeline: Lampa.Timeline.view(h, Lampa.Timeline.link ? Lampa.Timeline.link(card, x[1], x[2]) : null) } };
+        });
+    }
+
+    // 7a) Lampa's own record of a series catches up with what MX played. Lampa learns a position only when MX is left with
+    //     «Назад» while Lampa lives: Android drops Lampa during a long MX session, TV off, the screensaver — its marks
+    //     stop (TV 2026-11-08: marks on S6E1, MX had played S6E1→S6E5), and the home tile «Продолжить просмотр» said
+    //     «1 - Эпизод 1» — for a series whose LAST season has no marks the core shows the online «last watched» record
+    //     (online_watched_last, card_watched), here an old online watch. At Lampa start, from TorrServer's facts about the
+    //     card's release started last (its start record and the files streamed since):
+    //      · the episodes MX went past are marked watched, as the core's «Отметить просмотренным» does — only streamed ones,
+    //        only when Lampa heard nothing of them since that start, a finished one never again;
+    //      · the «last watched» record names the episode «Продолжить» plays; the online source's own fields (voice) stay,
+    //        and an online watch after that session is not overwritten (the record keeps which session it came from).
+    var LAST_WATCHED = 'online_watched_last';
+    function catchUp() {
+        var url = Lampa.Torserver && Lampa.Torserver.url && Lampa.Torserver.url();
+        if (!window.lampa_tv_pick_episode || !url) return;
+        var net = new Lampa.Reguest();
+        net.timeout(5000);
+        net.silent(url.replace(/\/$/, '') + '/torrents', function (list) {
+            (Array.isArray(list) ? list : []).forEach(function (t) {
+                var card = torrentData(t).movie, rec = lastStart(t);
+                if (!card || !rec.at || !rec.eps || !rec.eps.length || pickRelease(list, card) !== t) return;
+                streamed(String(t.hash).toLowerCase(), function (opened) {
+                    try { catchUpCard(card, rec, opened); } catch (err) { console.log('RuTorrents', 'catch-up error', err && err.message); }
+                });
+            });
+        }, function () {}, JSON.stringify({ action: 'list' }));
+    }
+    function catchUpCard(card, rec, opened) {
+        var rows = episodeRows(card, rec), target = window.lampa_tv_pick_episode(rows, { file: rec.file, at: rec.at, opened: opened }).target;
+        if (!target) return;
+        var played = opened.concat([rec.file]), passed = [];
+        rows.slice(0, rows.indexOf(target)).forEach(function (r) {
+            var v = r.element.timeline;
+            if (played.indexOf(r.element.id) < 0 || (v.percent || 0) >= 90 || (v.updated || 0) >= rec.at) return;
+            v.percent = 100;
+            v.time = v.duration;
+            Lampa.Timeline.update(v);
+            passed.push('S' + r.element.season + 'E' + r.element.episode);
+        });
+        var all = Lampa.Storage.get(LAST_WATCHED, '{}') || {}, key = Lampa.Utils.hash(card.original_title || card.original_name);
+        var last = all[key] || {}, el = target.element, moved = last.lampa_tv_at !== rec.at || last.lampa_tv_file !== el.id;
+        if (moved) {
+            last.season = el.season; last.episode = el.episode; last.lampa_tv_at = rec.at; last.lampa_tv_file = el.id;
+            all[key] = last;
+            Lampa.Storage.set(LAST_WATCHED, all);
+        }
+        if (passed.length || moved) console.log('RuTorrents', 'caught up', card.id, 'S' + el.season + 'E' + el.episode, passed.length ? 'watched ' + passed.join(',') : '', '(started file ' + rec.file + ', streamed ' + opened.join(',') + ')');
+    }
+
     // 14:20, 1:02:05 (Lampa's secondsToTime(…, true) gives hours:minutes — «00:14» for 14 min 20 s, TV 2026-11-04)
     function clock(sec) {
         sec = Math.round(sec);
@@ -858,6 +912,17 @@
 
         // 1.0–1.3 used their own sort key, which Lampa's sort menu doesn't list → back to Lampa's default
         if (Lampa.Storage.get('torrents_sort', 'popular') === 'RuSeeders') Lampa.Storage.set('torrents_sort', 'popular');
+
+        // 7a) at start (quick-start, which makes the episode choice, is loaded by then) and when Lampa is shown again
+        setTimeout(catchUp, 5000);
+        if (typeof document !== 'undefined' && document.addEventListener) {
+            var caught = Date.now();
+            document.addEventListener('visibilitychange', function () {
+                if (document.visibilityState !== 'visible' || Date.now() - caught < 30000) return;
+                caught = Date.now();
+                catchUp();
+            });
+        }
 
         console.log('RuTorrents', 'ready', window.lampa_tv_ru_torrents);
         return true;
