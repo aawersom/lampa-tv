@@ -4,8 +4,9 @@
  * 1) The same torrent (same btih) found by both parsers becomes one row with all its trackers
  *    and the announce URLs of both magnets (one swarm: TorrServer asks every tracker for peers).
  * 2) Whatever sort is chosen in «Сортировать», on top of it:
- *      Russian releases first, then the rest,
- *      then releases whose year matches the film's year (wrong films with a similar title sink);
+ *      releases of the card's kind of thing first (JacRed's info.types: no anime / TV show for a live-action series),
+ *      then Russian releases first, then the rest,
+ *      then releases whose year matches the film's year, or one of the years a series ran (wrong ones with a similar title sink);
  *    inside each group the chosen sort stays (default «Популярное»: films by seeders,
  *    series latest season first). Russian = Russian audio in track info, or (no track info and
  *    on a Russian/Ukrainian tracker).
@@ -29,7 +30,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.24.0';
+    window.lampa_tv_ru_torrents = '1.25.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -67,18 +68,34 @@
         return 0;
     }
 
-    // 2 = title has the film's year, 1 = ±1 year or no year in title, 0 = other years only
-    function yearRank(x, year, serial) {
-        if (!year || serial) return 1;
+    // 2 = title has the film's year (a series: a year it ran), 1 = ±1 year or no year in title, 0 = other years only
+    function yearRank(x, year, last) {
+        if (!year) return 1;
         var ys = String(x.Title || '').match(/(?:19|20)\d\d/g);
         if (!ys) return 1;
         var best = 0;
         for (var i = 0; i < ys.length; i++) {
-            var d = Math.abs(parseInt(ys[i], 10) - year);
-            if (d === 0) return 2;
-            if (d === 1) best = 1;
+            var y = parseInt(ys[i], 10);
+            if (y >= year && y <= last) return 2;
+            if (y >= year - 1 && y <= last + 1) best = 1;
         }
         return best;
+    }
+
+    // 1 = the release may be this card's kind of thing, 0 = JacRed files it as another kind (info.types: the tracker's
+    // category). One Russian title often names several things (owner, 2026-11-09: «Игра на выживание» — the 2020 Russian
+    // series, the US show Survivor and the anime «No Game No Life»). Animated cards take every kind: trackers file
+    // cartoons and anime as plain series and films too (Futurama, Attack on Titan); unknown kind → 1.
+    function kin(x, movie, serial) {
+        var types = x.info && x.info.types;
+        if (!types || !types.length) return 1;
+        var g = (movie.genres || []).map(function (a) { return a.id; }).concat(movie.genre_ids || []);
+        var has = function (id) { return g.indexOf(id) >= 0; };
+        if (has(16)) return 1;
+        var ok = serial ? (has(99) ? ['docuserial', 'serial', 'tvshow'] : has(10764) || has(10767) ? ['tvshow', 'serial'] : ['serial'])
+            : has(99) ? ['documovie', 'movie'] : ['movie'];
+        for (var i = 0; i < types.length; i++) if (ok.indexOf(types[i]) >= 0) return 1;
+        return 0;
     }
 
     // Russian release = Russian audio known, or (audio unknown AND the release is on a Russian/Ukrainian tracker)
@@ -133,7 +150,9 @@
         var movie = (params && params.movie) || {};
         var year = parseInt(String(movie.release_date || movie.first_air_date || '').slice(0, 4), 10) || 0;
         var serial = !!(movie.number_of_seasons || movie.original_name);
-        json.Results.forEach(function (x) { x[RANK] = russian(x) * 3 + yearRank(x, year, serial); });
+        // a series' years: from its start to its end (still running or not known → this year)
+        var last = !serial ? year : !movie.in_production && parseInt(String(movie.last_air_date || '').slice(0, 4), 10) || new Date().getFullYear();
+        json.Results.forEach(function (x) { x[RANK] = kin(x, movie, serial) * 9 + russian(x) * 3 + yearRank(x, year, last); });
     }
 
     // 4) Prefetch. One answer is kept: the last opened card's, until it is used, the card is closed or 5 minutes pass

@@ -8,7 +8,7 @@ the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa k
 parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
-Versions (2026-11-08, Lampa core 3.4.6): ru-torrents 1.24.0, similar 1.1.2, quick-start 1.12.0, no-dmca 1.1.0, poster-heal 1.4.0,
+Versions (2026-11-09, Lampa core 3.4.6): ru-torrents 1.25.0, similar 1.1.2, quick-start 1.12.0, no-dmca 1.1.0, poster-heal 1.4.0,
 no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.0, catalog-next 1.6.2, tor-updater 0.1.6-tv.3, imdb-filter 1.0.3.
 Tests: `for f in test/*.cjs; do node $f; done`.
 
