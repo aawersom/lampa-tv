@@ -1,6 +1,7 @@
 // node test/resume-preload.test.cjs
 // quick-start 2) preload. A start from the beginning waits for ~10 s of THIS video (file size / runtime × 10, ≥ 3 MB).
-// A start that resumes mid-file (Lampa's mark, or MX's own place — 7) does not read the file's start at all: only the
+// MX starts at its own place (7). Where that is, only MX knows; the file is taken as resumed mid-file when Lampa holds an
+// unfinished mark of it, or MX played it in the release's last session. Then the file's start is not read at all: only the
 // first bytes are waited for — the release delivers — then MX asks TorrServer for its place itself (TV 2026-11-08: after
 // the nightly reboot «Продолжить» stood 44 s on «8 / 241 · 676 Кбит/с» loading S6E5's first seconds; MX began at 44:09).
 const fs = require('fs');
@@ -28,9 +29,11 @@ function boot(mode, viewed) {
   new Function('Lampa', 'window', '$', 'setTimeout', 'console', src)(Lampa, { $: jq }, jq, (fn) => timers.push(fn), { log: () => {} });
   const send = (e) => (follows.torrent_file || []).forEach((fn) => fn(e));
   return {
-    list(rows) {
-      send({ type: 'list_open', params: { movie: { name: 'Игра престолов' } } });
-      rows.forEach((el) => send({ type: 'render', element: el, item: { name: el.id }, params: { movie: { name: 'Игра престолов' } } }));
+    list(rows, play) {
+      const movie = { name: 'Игра престолов' };
+      if (play) Object.defineProperty(movie, 'lampa_tv_play', { value: play });
+      send({ type: 'list_open', params: { movie } });
+      rows.forEach((el) => send({ type: 'render', element: el, item: { name: el.id, trigger: () => {} }, params: { movie } }));
     },
     // the size Lampa's preload screen waits for, as the core reads it from TorrServer's &stat answer
     waits(index, hash) {
@@ -50,15 +53,26 @@ check('from the start → ~10 s of this video, as before', t.waits(55), TEN_SECO
 
 t = boot();
 t.list([ep(55, { percent: 74, time: 2648, updated: 900 })]);
-check('Lampa mark 44:08 → MX starts there: only the first bytes are waited for', t.waits(55), 1);
+check('Lampa holds an unfinished mark (44:08) → mid-file: only the first bytes are waited for', t.waits(55), 1);
 
 t = boot('continue', [55]);
 t.list([ep(55, { percent: 0, time: 0, updated: 0 })]);
 check('no Lampa mark, but MX streamed this file last (resumes its own place) → first bytes only', t.waits(55), 1);
 
+t = boot('continue', []);
+t.list([ep(55, { percent: 0, time: 0, updated: 0 })], { file: 55, at: 5, opened: [] });
+check('«Продолжить» on the file started last, TorrServer’s streamed list empty (restarted) → first bytes only', t.waits(55), 1);
+t = boot('continue', []);
+t.list([ep(55, { percent: 0, time: 0, updated: 0 }), ep(56, { percent: 0, time: 0, updated: 0 })], { file: 55, at: 5, opened: [56] });
+check('«Продолжить» on a file MX went on to (noted by ru-torrents) → first bytes only', t.waits(56), 1);
+
+t = boot('continue', [55]);
+t.list([ep(55, { percent: 0, time: 0, updated: 900 })]);
+check('MX streamed it last, its Lampa mark reset by hand → first bytes only (MX resumes all the same, 7)', t.waits(55), 1);
+
 t = boot();
 t.list([ep(55, { percent: 96, time: 3400, updated: 900 })]);
-check('finished episode starts over → ~10 s as before', t.waits(55), TEN_SECONDS);
+check('held finished by Lampa, not played last → taken as a start from the beginning: ~10 s', t.waits(55), TEN_SECONDS);
 
 t = boot('again');
 t.list([ep(55, { percent: 74, time: 2648, updated: 900 })]);

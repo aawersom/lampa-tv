@@ -32,8 +32,11 @@ function boot(viewed, opts) {
     Timeline: { view: (h) => Object.assign({ hash: h, percent: 0, time: 0, updated: 0 }, marks[h] || {}), update: (p) => { marks[p.hash] = Object.assign({}, p, { updated: Date.now() }); } },
     Android: { openPlayer: () => {} },
   };
-  const win = { AndroidJS: { storageChange: (json) => st.modes.push(JSON.parse(json).value) } };
-  new Function('Lampa', 'window', '$', 'setTimeout', 'console', 'document', src)(Lampa, win, undefined, (fn) => timers.push(fn), { log: () => {} }, opts.noDocument ? undefined : doc);
+  let prefilter = null;
+  const jq = { ajaxPrefilter: (fn) => { prefilter = fn; } };
+  Lampa.Activity = { active: () => ({ card: { name: 'Игра престолов', episode_run_time: [60] } }) };
+  const win = { $: jq, AndroidJS: { storageChange: (json) => st.modes.push(JSON.parse(json).value) } };
+  new Function('Lampa', 'window', '$', 'setTimeout', 'console', 'document', src)(Lampa, win, jq, (fn) => timers.push(fn), { log: () => {} }, opts.noDocument ? undefined : doc);
   const send = (e) => (follows.torrent_file || []).forEach((fn) => fn(e));
   const run = () => { while (timers.length) timers.shift()(); };
   let rows = [];
@@ -55,6 +58,12 @@ function boot(viewed, opts) {
     // back from MX: the app hands Lampa MX's result (or not), the page is shown; the core refocuses the pressed row
     back(app) { (app || []).forEach((u) => Lampa.Timeline.update(u)); if (doc.on.visibilitychange) doc.on.visibilitychange(); run(); },
     row: (name) => rows.find((r) => r.name === name),
+    // the size Lampa's preload screen waits for, as the core reads it from TorrServer's &stat answer
+    waits(id) {
+      const options = { url: 'http://ts/stream/x.mkv?link=abc&index=' + id + '&stat' };
+      prefilter(options);
+      return JSON.parse(options.dataFilter(JSON.stringify({ preload_size: 200e6, preloaded_bytes: 0, file_stats: [{ id, length: 3.6e9 }] }), 'json')).preload_size;
+    },
   };
 }
 
@@ -72,9 +81,7 @@ t.open(GOT); t.press('S6E5');
 viewed.list = [55, 56, 57];
 t.back([]);
 check('no result from MX (TV off): the last file TorrServer streamed (S6E7)', t.st.focus, 'S6E7');
-t.st.modes.length = 0;
-t.press('S6E7');
-check('…and the start of S6E7 lets MX resume its own place (it streamed that file)', t.st.modes, ['ask']);
+check('…and S6E7, with no Lampa mark, is known to be mid-file in MX: its start waits for the first bytes only', [t.waits(57), t.waits(59)], [1, 3.6e9 / 3600 * 10]);
 
 // «Назад» at the very end of S6E6: Lampa's fresh mark says finished → the next one
 viewed = { list: [] }; t = boot(viewed);

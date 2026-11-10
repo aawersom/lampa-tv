@@ -8,25 +8,27 @@
  *    list still open, the focus leaves the episode pressed for the one MX stopped at.
  * 2) Preload: Lampa waits until TorrServer has PreloadCache % of its cache (one size for every file). Here the wait
  *    ends once ~10 seconds of THIS video are buffered (file size / runtime × 10 s); never more than TorrServer's own
- *    preload size. A start that resumes mid-file waits for the first bytes only: MX reads from its place, not the start.
+ *    preload size. A file taken as resumed mid-file (an unfinished Lampa mark, or played in the release's last session)
+ *    waits for the first bytes only: MX reads from its place, not the start.
  *    Done by trimming `preload_size` in TorrServer's `&stat` answers that Lampa polls (torrent.js preload).
  * 3) A list opened by «Продолжить» (ru-torrents, marked lampa_tv_play) plays at once: the episode chosen as in 1), or the film
  *    file played last; nothing to choose (all watched, several equal files never played) → the list stays. A session that
- *    ended without «Назад» in MX left Lampa no marks: then the episode started last (or the one MX went on to) plays,
- *    from Lampa's last mark of it. No record of the start in that release: the latest file TorrServer streamed.
+ *    ended without «Назад» in MX left Lampa no marks: then the episode started last (or the one MX went on to) plays.
+ *    No record of the start in that release: the latest file TorrServer streamed.
  * 4) Lampa's video screensaver releases the hardware video decoder when it closes (it kept it, see below).
  * 5) «История» is the bookmark list again (Lampa 3.4 with CUB sync made it a screen of panels): OK opens the card.
  * 6) MX shows «Сезон 1 Серия 2: Название» for an episode. The core hands the external player only the episode's
  *    name (title = fname), so MX never said which season/episode plays. Every playlist entry is labelled too,
  *    so the title stays right when MX moves to the next file on its own.
- * 7) MX resumes from its own place (saved at every stop — TV off, «Домой» too) when it played this very file last: for that
- *    start the Lampa app is told the timecode mode «ask», which hands MX no position; every other start, the owner's
- *    own mode. Lampa's setting itself is never written.
+ * 7) The place inside a torrent file is MX's alone (it saves it at every stop — TV off, «Домой» too — per file address):
+ *    every start of a torrent file from Lampa tells the Lampa app the timecode mode «ask», which hands MX no position,
+ *    as the TorrServe app starts MX. Another mode of the owner's, an online source: his own mode. Lampa's setting itself
+ *    is never written.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.13.0';
+    window.lampa_tv_quick_start = '1.14.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -51,7 +53,7 @@
             return;
         }
         var p = pickEpisode(list, play), target = p.target;
-        if (play) console.log('QuickStart', 'continue →', target ? 'S' + (target.element.season || '-') + 'E' + (target.element.episode || '-') + ' file ' + target.element.id : 'nothing to play', p.started ? 'started ' + play.file : 'no start record', 'streamed', p.opened.join(','), target && target.element.timeline && target.element.timeline.time ? 'from ' + target.element.timeline.time + ' s (Lampa mark)' : 'from the start');
+        if (play) console.log('QuickStart', 'continue →', target ? 'S' + (target.element.season || '-') + 'E' + (target.element.episode || '-') + ' file ' + target.element.id : 'nothing to play', p.started ? 'started ' + play.file : 'no start record', 'streamed', p.opened.join(','), 'Lampa mark', target && target.element.timeline ? Math.round(target.element.timeline.time || 0) + ' s' : 'none');
         if (target && Lampa.Modal && Lampa.Modal.scroll) Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
         if (target && play) target.item.trigger('hover:enter');
     }
@@ -81,10 +83,8 @@
         //  · a played episode has a mark newer than the start (MX left with «Назад»): the newest one, unfinished → it,
         //    finished → the next one;
         //  · no such mark (TV off, «Домой», screensaver — Lampa never heard back): the started episode, or a later one MX went
-        //    on to, from Lampa's last mark of it. Not MX's own memory: the Lampa app always hands MX a position — the mark's
-        //    time, or 1 ms when there is none (lampa-app MainActivity, playerTimeCode «continue»), so MX starts there
-        //    (TV 2026-11-04: MX knew 15:28, got position=1, started over). 1.6–1.9.0 cleared that mark → the next
-        //    «Продолжить» started the episode over; nothing is cleared now.
+        //    on to. The place inside it is MX's own (7). 1.6–1.9.0 cleared Lampa's mark of it → the next «Продолжить»
+        //    started the episode over; nothing is cleared now.
         var started = play && play.at ? list.filter(function (r) { return r.element.id === play.file; })[0] : null;
         var opened = play && play.opened || [];
         if (!started && play && opened.length) {
@@ -139,7 +139,7 @@
     // place). Once Lampa is back — the app hands it MX's result through Lampa.Timeline.update, or the page is shown again
     // (visibilitychange, not sent by every Android WebView) — the focus moves to the episode «Продолжить» would play: the
     // start just made, the files TorrServer streamed since, Lampa's fresh marks. Not when the viewer has moved, or the list
-    // is closed. MX's streamed files are learnt again, so the next start lets MX resume its own place (7).
+    // is closed. MX's streamed files are learnt again: the next start of one of them is known to be mid-file (2).
     var pressed = null, back = 0;
     function backFromPlayer() {
         if (back) return;
@@ -226,18 +226,50 @@
     // for ru-torrents: the button «Продолжить» says which episode it plays (same choice as the list makes)
     window.lampa_tv_pick_episode = pickEpisode;
 
-    // ---- 7) MX resumes from ITS OWN place when it played this very file last ----
-    // The Lampa app hands MX a position on every start: Lampa's mark, which moves only when MX is left with «Назад» (TV off,
-    // «Домой», the screensaver — the mark stays where it was). In the app's «ask» mode (Lampa's «Тайм-код: спросить») it
-    // hands none, and MX resumes from its own record — it saves the place at every stop, per file address (TV
-    // 2026-11-04: MX knew 15:28, Lampa 14:38). So for one start the mode is «ask» when MX streamed this very file of this
-    // release in its last session (TorrServer's list of streamed files of the release, reset at every start from Lampa),
-    // and the next start is told the owner's own setting again. Not when the owner's setting is other than «continue»,
-    // the episode is finished, or its mark was reset by hand.
-    // The mode is told to the APP for each start, right before it (its bridge AndroidJS.storageChange — what the app's own
-    // Lampa.Storage listener calls); Lampa's setting «Тайм-код» is never written. 1.10 wrote the setting and put it back
-    // by a timer: a page the app reloaded behind MX lost the timer and left the owner on «Спрашивать» (TV 2026-11-06).
-    // The app re-reads the real setting on every page load (lampa-app MainActivity.syncStorage) — nothing can stick.
+    // ---- 7) the place inside a torrent file is MX's alone ----
+    // MX saves its place at every stop, per file address, and TorrServer's addresses never change — TV off, «Домой», Lampa
+    // killed by Android: the place is there. Lampa's mark moves only when MX's result reaches a living Lampa. Yet on a
+    // «continue» start the Lampa app hands MX a position — the mark's time, or 1 ms (= from the start) when there is none
+    // (lampa-app MainActivity.configureMxPlayerIntent) — and MX obeys, dropping its own place (TV 2026-11-04: MX knew
+    // 15:28, got Lampa's 14:38). In the app's «ask» mode (Lampa's «Тайм-код: спросить») it hands none.
+    // So every start of a torrent file under the owner's «continue» tells the app «ask»; the next start is told again.
+    // This is how the TorrServe app starts MX (no position, ever), the flow this TV had before 2026-10-11. 1.9–1.13 did
+    // it only for files of the release's last session: any other episode whose result had been lost started over
+    // (owner, 2026-11-10). Another mode of the owner's is left alone; online sources keep his mode — their addresses
+    // change, MX has no place for them.
+    // No exception for a mark reset by hand, as 1.9–1.13 had: such a mark reads {0 %, 0 s} until a result reaches Lampa,
+    // so after a lost result the episode started over again; and a stop within the first 1 % reads «0 %» too (the app
+    // rounds down). To start over, rewind in MX.
+    // The price: where MX has no place of its own for the address — the same episode in another release (one tor-updater
+    // put in place of the old one too), or watched so far online or in Lampa's own player — it starts from zero,
+    // whatever Lampa's mark says.
+    // The mode is told to the APP for each start from Lampa, right before it (its bridge AndroidJS.storageChange — what
+    // the app's own Lampa.Storage listener calls); Lampa's setting «Тайм-код» is never written. 1.10 wrote the setting and
+    // put it back by a timer: a page the app reloaded behind MX lost the timer and left the owner on «Спрашивать» (TV
+    // 2026-11-06). The app re-reads the real setting on every page load (lampa-app MainActivity.syncStorage) — nothing
+    // can stick. A start the app makes by itself (its «continue watching» row on the Android TV home screen) is not seen here.
+    function tellAppMode(d) {
+        var app = window.AndroidJS, own = Lampa.Storage.field('player_timecode');
+        if (!app || typeof app.storageChange !== 'function') return;
+        var mode = own === 'continue' && d && d.torrent_hash ? 'ask' : own, tl = d && d.timeline || {};
+        app.storageChange(JSON.stringify({ name: 'player_timecode', value: mode }));
+        if (mode !== own) console.log('QuickStart', 'MX resumes its own place: file', d.id, '(Lampa mark ' + Math.round(tl.time || 0) + ' s, ' + (tl.percent || 0) + ' %)');
+    }
+
+    // ---- 2) preload ----
+    function runtimeSeconds() {
+        var a = Lampa.Activity.active() || {};
+        var m = a.movie || a.card || {};
+        var min = m.runtime || (m.episode_run_time && m.episode_run_time[0]) || (m.last_episode_to_air && m.last_episode_to_air.runtime) || 0;
+        return min * 60;
+    }
+
+    // MX starts at its own place (7) and asks TorrServer for that place itself: when it is mid-file, the file's start is
+    // not what it reads, and only the first bytes are waited for (the release delivers at all). TV 2026-11-08: after the
+    // nightly reboot TorrServer was cold, «Продолжить» stood 44 s on «8 / 241 · 676 Кбит/с» loading S6E5's first
+    // seconds, and MX began at 44:09. Where MX's place is, only MX knows; the file is taken as mid-file when Lampa holds
+    // an unfinished mark of it, or MX played it in the release's last session — the file started from Lampa last and the
+    // files TorrServer streamed since (its list is reset at every start from Lampa).
     var streamed = {}; // release hash → file ids MX played in its last session
     function learnStreamed(hash, movie) {
         hash = String(hash).toLowerCase();
@@ -251,37 +283,13 @@
             (Array.isArray(list) ? list : []).forEach(function (v) { if (streamed[hash].indexOf(v.file_index) < 0) streamed[hash].push(v.file_index); });
         }, function () {}, JSON.stringify({ action: 'list', hash: hash }));
     }
-    function mxHasPlace(d) {
-        var tl = d && d.timeline;
-        if (!d || !d.torrent_hash || !tl || (streamed[String(d.torrent_hash).toLowerCase()] || []).indexOf(d.id) < 0) return false;
-        return (tl.percent || 0) < 90 && !(!tl.percent && tl.updated);
-    }
-    function tellAppMode(d) {
-        var app = window.AndroidJS, own = Lampa.Storage.field('player_timecode');
-        if (!app || typeof app.storageChange !== 'function') return;
-        var mode = own === 'continue' && mxHasPlace(d) ? 'ask' : own;
-        app.storageChange(JSON.stringify({ name: 'player_timecode', value: mode }));
-        if (mode !== own) console.log('QuickStart', 'MX resumes its own place: file', d.id, '(Lampa mark ' + Math.round(d.timeline.time || 0) + ' s)');
-    }
-
-    // ---- 2) preload ----
-    function runtimeSeconds() {
-        var a = Lampa.Activity.active() || {};
-        var m = a.movie || a.card || {};
-        var min = m.runtime || (m.episode_run_time && m.episode_run_time[0]) || (m.last_episode_to_air && m.last_episode_to_air.runtime) || 0;
-        return min * 60;
-    }
-
-    // MX starts mid-file — at Lampa's mark, or at its own place (7) — and asks TorrServer for that place itself: the file's
-    // start is not what it reads. Only the first bytes are waited for then (the release delivers at all). TV 2026-11-08:
-    // after the nightly reboot TorrServer was cold, «Продолжить» stood 44 s on «8 / 241 · 676 Кбит/с» loading S6E5's
-    // first seconds, and MX began at 44:09.
+    // MX is known to hold a place in the file: it played it in the release's last session (for the preload, see 2)
     function resumes(url) {
         var hash = String((/[?&]link=([^&]+)/.exec(url) || [])[1]).toLowerCase(), idx = parseInt((/[?&]index=(\d+)/.exec(url) || [])[1], 10);
         var el = rendered.map(function (r) { return r.element; }).filter(function (d) { return d && d.id === idx && String(d.torrent_hash).toLowerCase() === hash; })[0];
         var tl = el && el.timeline || {};
         if (!el || Lampa.Storage.field('player_timecode') !== 'continue' || (tl.percent || 0) >= 90) return false;
-        return tl.time > 0 || mxHasPlace(el);
+        return tl.time > 0 || (streamed[hash] || []).indexOf(idx) >= 0;
     }
 
     function enough(stat, url) {

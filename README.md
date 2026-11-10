@@ -8,7 +8,7 @@ the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa k
 parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
-Versions (2026-11-10, Lampa core 3.4.6): ru-torrents 1.25.1, similar 1.1.2, quick-start 1.13.0, no-dmca 1.1.0, poster-heal 1.4.0,
+Versions (2026-11-10, Lampa core 3.4.6): ru-torrents 1.26.0, similar 1.1.2, quick-start 1.14.0, no-dmca 1.1.0, poster-heal 1.4.0,
 no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.0, catalog-next 1.6.2, tor-updater 0.1.6-tv.3, imdb-filter 1.0.3.
 Tests: `for f in test/*.cjs; do node $f; done`.
 
@@ -23,7 +23,7 @@ Tests: `for f in test/*.cjs; do node $f; done`.
   A card whose film/series was opened before (TorrServer keeps the release with its card) gets «Продолжить» next to «Смотреть»:
   plays at once — the episode to watch (in progress, else the next) or the film's file played last — from the release a file was
   started from last (every start from Lampa is noted in that release's own data in TorrServer; none noted → TorrServer's newest of the
-  card), instead of «Смотреть» → «Торренты» → release → file; the button says what it plays («Продолжить · S2E5 · 14:20»);
+  card), instead of «Смотреть» → «Торренты» → release → file; the button says what it plays («Продолжить · S2E5»);
   the warm-up uses the same release. A pressed release keeps the data TorrServer saved with it (TorrServer gives a resting torrent
   the data of Lampa's add instead — the start notes went with it; `node test/ru-torrents-boot.test.cjs`).
   Card buttons: «Смотреть» opens «Торренты» at once, the online source gets its own «Онлайн» button, no «Подписаться» bell.
@@ -42,8 +42,10 @@ Tests: `for f in test/*.cjs; do node $f; done`.
 - `quick-start.js` — a film's file starts at once (no 10 s countdown; film/series taken from the card, not the file name);
   in a series the focus goes to the next episode; Lampa stops waiting for TorrServer's preload once ~10 s of that video are buffered.
   A list opened by «Продолжить» plays at once: the episode started last (or the one MX went on to), unless a newer mark says it was
-  finished. MX resumes from its own place when it streamed that very file last (the Lampa app is told the timecode mode «ask» for that
-  one start, through its bridge; the owner's setting is never written). MX titles episodes «Сезон 1 Серия 2: Название». «История»
+  finished. The place inside a torrent file is MX's alone, as when the TorrServe app starts it: every start of a torrent file from
+  Lampa tells the Lampa app the timecode mode «ask», so it hands MX no position (through its bridge; the owner's setting is never
+  written; another mode of his and online sources keep his mode). Where MX has no place of its own — another release of the same
+  episode, or one watched online so far — it starts from zero. MX titles episodes «Сезон 1 Серия 2: Название». «История»
   opens cards again (Lampa 3.4's panel screen is bypassed). The screensaver's video releases the hardware decoder when it stops.
 - `no-dmca.js` — no content restrictions: cards blocked «по требованию правообладателя» open (Lampa's blocked-id list is ignored, a CUB stub
   is replaced with the card details from TMDB); the LGBT filter is off (its list is never loaded).

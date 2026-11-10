@@ -30,7 +30,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.25.1';
+    window.lampa_tv_ru_torrents = '1.26.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -336,17 +336,13 @@
             done((Array.isArray(list) ? list : []).map(function (v) { return v.file_index; }));
         }, function () { done([]); }, JSON.stringify({ action: 'list', hash: hash }));
     }
-    // «S2E5 · 23:10» of the episode «Продолжить» plays and the place the Lampa app hands MX (its mark's time) — quick-start's own choice
-    // (window.lampa_tv_pick_episode) over the release's episodes noted at its last start; '' when not known
+    // «S2E5» — the episode «Продолжить» plays: quick-start's own choice (window.lampa_tv_pick_episode) over the release's
+    // episodes noted at its last start; '' when not known. No time: the place inside the file is MX's own (quick-start 7).
     function continueLabel(card, rec, opened) {
         var pick = window.lampa_tv_pick_episode;
         if (!pick || !card.name || !rec || !rec.at || !rec.eps || !rec.eps.length) return '';
-        var p = pick(episodeRows(card, rec), { file: rec.file, at: rec.at, opened: opened || [] }), el = p.target && p.target.element;
-        if (!el) return '';
-        // MX resumes from its own place when it streamed this very file last (quick-start 7) — Lampa's time would be off
-        var tl = el.timeline || {}, mx = (opened || []).concat([rec.file]).indexOf(el.id) >= 0 && (tl.percent || 0) < 90 && !(!tl.percent && tl.updated);
-        var time = !mx && tl.time > 0 ? ' · ' + clock(tl.time) : '';
-        return 'S' + el.season + 'E' + el.episode + time;
+        var el = (pick(episodeRows(card, rec), { file: rec.file, at: rec.at, opened: opened || [] }).target || {}).element;
+        return el ? 'S' + el.season + 'E' + el.episode : '';
     }
     // the release's episodes noted at its last start, in list order, with Lampa's marks (under the card's key, as the core's list)
     function episodeRows(card, rec) {
@@ -405,13 +401,6 @@
         if (passed.length || moved) console.log('RuTorrents', 'caught up', card.id, 'S' + el.season + 'E' + el.episode, passed.length ? 'watched ' + passed.join(',') : '', '(started file ' + rec.file + ', streamed ' + opened.join(',') + ')');
     }
 
-    // 14:20, 1:02:05 (Lampa's secondsToTime(…, true) gives hours:minutes — «00:14» for 14 min 20 s, TV 2026-11-04)
-    function clock(sec) {
-        sec = Math.round(sec);
-        var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60, two = function (n) { return (n < 10 ? '0' : '') + n; };
-        return (h ? h + ':' + two(m) : m) + ':' + two(s);
-    }
-
     function addContinue(e) {
         if (e.type !== 'complite' || !e.data || !e.data.movie || !e.object || !e.object.activity) return;
         var card = e.data.movie, render = e.object.activity.render();
@@ -419,8 +408,8 @@
             var play = render.find('.button--play');
             if (!play.length || render.find('.button--continue').length) return;
             var btn = $('<div class="full-start__button selector button--continue">' + CONTINUE_ICON + '<span>Продолжить</span></div>');
-            // the button says what it plays: «Продолжить · S2E5 · 14:38» — the same choice the list makes; worked out again
-            // when the button gets the focus (back from MX the card is the same, the episode and place are not)
+            // the button says what it plays: «Продолжить · S2E5» — the same choice the list makes; worked out again
+            // when the button gets the focus (back from MX the card is the same, the episode is not)
             var relabel = function (h, rec) {
                 streamed(h, function (opened) {
                     var label = continueLabel(card, rec, opened);

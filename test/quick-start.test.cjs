@@ -59,8 +59,8 @@ check('film collection, nothing remembered → list stays', [big(1, 4e9), big(2,
 // TV 2026-11-04: the Lampa app always hands MX a position (mark time, else 1 ms = from the start) — the mark is never cleared
 { const stale = [ep('E1', 100, 100), ep('E2', 30, 100), ep('E3', 0, 0)]; stale[1].element.timeline.time = 600;
   check('no fresh mark: E2 plays', stale, cont('E2', 500, ['E2']), 'E2', 'E2');
-  const t = stale[1].element.timeline.time; const ok = t === 600; if (!ok) failed++; console.log((ok ? 'ok   ' : 'FAIL ') + 'its last mark is kept → MX starts there, not over' + (ok ? '' : ' — got ' + t)); }
+  const t = stale[1].element.timeline.time; const ok = t === 600; if (!ok) failed++; console.log((ok ? 'ok   ' : 'FAIL ') + 'its last mark is kept (nothing is cleared)' + (ok ? '' : ' — got ' + t)); }
 { const fresh2 = [ep('E2', 30, 700), ep('E3', 0, 0)]; fresh2[0].element.timeline.time = 600;
   check('fresh mark (left MX with «Назад»): plays E2', fresh2, cont('E2', 500, ['E2']), 'E2', 'E2');
-  const ok = fresh2[0].element.timeline.time === 600; if (!ok) failed++; console.log((ok ? 'ok   ' : 'FAIL ') + 'fresh mark keeps its time → MX starts there'); }
+  const ok = fresh2[0].element.timeline.time === 600; if (!ok) failed++; console.log((ok ? 'ok   ' : 'FAIL ') + 'fresh mark keeps its time'); }
 process.exitCode = failed ? 1 : 0;

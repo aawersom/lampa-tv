@@ -96,9 +96,8 @@ marks[H5] = { percent: 40, time: 1390, updated: 900 };
 check('label: left MX with «Назад» on S2E5 → «S2E5» (MX played it: its own place, same as the mark)', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12]), 'S2E5');
 reset();
 marks[H5] = { percent: 96, time: 2750, updated: 900 }; marks[H6] = { percent: 10, time: 300, updated: 100 };
-check('label: S2E5 seen to the end → next S2E6, not played by MX this session → Lampa mark «S2E6 · 5:00»', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12]), 'S2E6 · 5:00');
-marks[H6] = { percent: 10, time: 3725, updated: 100 };
-check('label: past an hour → «1:02:05»', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12]), 'S2E6 · 1:02:05');
+// no time on the label: the place inside the file is MX's own (quick-start 7 — Lampa hands MX none), Lampa's mark may be stale
+check('label: S2E5 seen to the end → next S2E6, with an old Lampa mark → «S2E6», no time', w.api.continueLabel(card, { file: 12, at: 500, eps }, [12]), 'S2E6');
 reset();
 check('label: a film / no start known → none', [w.api.continueLabel({ id: 1, title: 'F' }, { file: 1, at: 5 }, []), w.api.continueLabel(card, {}, [])], ['', '']);
 process.exitCode = failed ? 1 : 0;
