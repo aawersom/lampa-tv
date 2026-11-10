@@ -4,7 +4,8 @@
  *    starts at once instead of Lampa's 10-second countdown; in a series the focus goes to the episode to watch next
  *    (the one watched last if unfinished, else the next one; nothing watched → the first) — the choice stays with the viewer.
  *    Lampa's marks lag when Lampa never heard back from MX; once TorrServer answers, a list opened by hand moves the focus
- *    to the episode «Продолжить» would play (its start record and the files streamed since — see 3).
+ *    to the episode «Продолжить» would play (its start record and the files streamed since — see 3). Back from MX to the
+ *    list still open, the focus leaves the episode pressed for the one MX stopped at.
  * 2) Preload: Lampa waits until TorrServer has PreloadCache % of its cache (one size for every file). Here the wait
  *    ends once ~10 seconds of THIS video are buffered (file size / runtime × 10 s); never more than TorrServer's own
  *    preload size. A start that resumes mid-file waits for the first bytes only: MX reads from its place, not the start.
@@ -25,7 +26,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.12.0';
+    window.lampa_tv_quick_start = '1.13.0';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -126,8 +127,59 @@
         } else if (e.type === 'render') {
             rendered.push({ item: e.item, element: e.element });
             if (rendered.length === 1 && e.element && e.element.torrent_hash) learnStreamed(e.element.torrent_hash, e.params && e.params.movie);
+        } else if (e.type === 'onenter' && e.element) {
+            pressed = { rows: rendered, id: e.element.id, at: Date.now() };
         }
     });
+
+    // Back from MX to the file list still open. The core leaves the list open behind the external player and, back in
+    // Lampa, focuses the episode pressed — the one the session STARTED with, though MX went on through the playlist (TV
+    // 2026-11-10: S6E5 started at 00:28, MX went on; back in the list at 01:51 and at 08:27 OK came within a minute both
+    // times → S6E5 again, from its start, the app having marked it watched; the owner skipped S6E5→S6E8 in MX to find the
+    // place). Once Lampa is back — the app hands it MX's result through Lampa.Timeline.update, or the page is shown again
+    // (visibilitychange, not sent by every Android WebView) — the focus moves to the episode «Продолжить» would play: the
+    // start just made, the files TorrServer streamed since, Lampa's fresh marks. Not when the viewer has moved, or the list
+    // is closed. MX's streamed files are learnt again, so the next start lets MX resume its own place (7).
+    var pressed = null, back = 0;
+    function backFromPlayer() {
+        if (back) return;
+        back = setTimeout(function () { back = 0; try { focusWhereStopped(); } catch (err) { console.log('QuickStart', 'back', err && err.message); } }, 1000);
+    }
+    function focusWhereStopped() {
+        var p = pressed, url = Lampa.Torserver && Lampa.Torserver.url && Lampa.Torserver.url();
+        if (!p || p.rows !== rendered || !url || !Lampa.Modal || !Lampa.Modal.scroll) return;
+        var row = p.rows.filter(function (r) { return r.element.id === p.id; })[0];
+        if (!row || !row.element.torrent_hash || Lampa.Controller.enabled().name !== 'modal' || !row.item.hasClass('focus')) return;
+        var hash = String(row.element.torrent_hash).toLowerCase(), net = new Lampa.Reguest();
+        net.timeout(3000);
+        net.silent(url.replace(/\/$/, '') + '/viewed', function (viewed) {
+            if (pressed !== p || p.rows !== rendered || !row.item.hasClass('focus')) return;
+            var opened = (Array.isArray(viewed) ? viewed : []).map(function (v) { return v.file_index; });
+            streamed[hash] = (streamed[hash] || []).concat(opened.filter(function (i) { return (streamed[hash] || []).indexOf(i) < 0; }));
+            // Lampa's marks as they are now (the app has just written MX's result)
+            var now = p.rows.map(function (r) {
+                var tl = r.element.timeline;
+                return { item: r.item, element: tl && tl.hash ? Object.assign({}, r.element, { timeline: Lampa.Timeline.view(tl.hash) }) : r.element };
+            });
+            var target = pickEpisode(now, { file: p.id, at: p.at, opened: opened }).target;
+            if (!target || target.item === row.item) return;
+            console.log('QuickStart', 'back from MX → S' + target.element.season + 'E' + target.element.episode, 'file ' + target.element.id, '(started ' + p.id + ', streamed ' + opened.join(',') + ')');
+            Lampa.Controller.collectionFocus(target.item, Lampa.Modal.scroll().render());
+        }, function () {}, JSON.stringify({ action: 'list', hash: hash }));
+    }
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') backFromPlayer(); });
+    }
+    if (Lampa.Timeline && typeof Lampa.Timeline.update === 'function') {
+        var timelineUpdate = Lampa.Timeline.update;
+        // the app calls Lampa.Timeline.update; so does the core (the same object) — a mark set by hand in the list then moves
+        // the focus only if it is still on the episode pressed (marked watched → the next one, as «Продолжить» would)
+        Lampa.Timeline.update = function () {
+            var r = timelineUpdate.apply(this, arguments);
+            backFromPlayer();
+            return r;
+        };
+    }
 
     // A series list opened BY HAND is focused by Lampa's marks first — they stop where Lampa last heard back from MX: Android
     // drops Lampa in the background during a long MX session (its answer then goes to nobody), TV off, the screensaver
