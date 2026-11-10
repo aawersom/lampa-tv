@@ -30,7 +30,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.25.0';
+    window.lampa_tv_ru_torrents = '1.25.1';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -932,8 +932,10 @@
         // 1.0–1.3 used their own sort key, which Lampa's sort menu doesn't list → back to Lampa's default
         if (Lampa.Storage.get('torrents_sort', 'popular') === 'RuSeeders') Lampa.Storage.set('torrents_sort', 'popular');
 
-        // 7a) at start (quick-start, which makes the episode choice, is loaded by then) and when Lampa is shown again
-        setTimeout(catchUp, 5000);
+        // 7a) at start — as soon as quick-start (the episode choice) is loaded, so the home tiles are drawn from the record
+        //     caught up (TV 2026-11-10: a fixed 5 s came after the tile, which showed the old episode until the next start) —
+        //     and when Lampa is shown again
+        (function first(n) { if (window.lampa_tv_pick_episode) catchUp(); else if (n < 50) setTimeout(function () { first(n + 1); }, 100); })(0);
         if (typeof document !== 'undefined' && document.addEventListener) {
             var caught = Date.now();
             document.addEventListener('visibilitychange', function () {
