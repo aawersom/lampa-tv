@@ -10,12 +10,19 @@
  * 3) applyUpdate. The new release got the old one's data as read before the probe (seconds earlier), and ru-torrents' start
  *    record in it named the OLD torrent's file indexes: «Продолжить» could start another episode. It is now read right before
  *    the add and moved to the new file ids by season/episode (carryPlay).
+ * 4) transferViewed. Marks TorrServer makes by streaming have no timecode and were skipped: the new release did not know
+ *    which files MX had played by itself, and «Продолжить» went back to the episode started from Lampa.
+ * 5) carryLatest. The old release's list stays on screen after the replacement; a file started from it is noted on the old
+ *    release, which was then removed with that note. The newer start is carried before the removal; a start with no place
+ *    in the new release keeps the old one.
+ * 6) A release in use is not removed: MX sends 'external', not 'start' (and no 'destroy' — it is over when Lampa is on
+ *    screen again); at Lampa start a superseded release that is being streamed stays.
  */
 (function () {
     'use strict'
 
-    const VERSION = '0.1.6-tv.3'
-    const BUILD_DATE = '2026-10-03T00:13:11.316Z'
+    const VERSION = '0.1.6-tv.4'
+    const BUILD_DATE = '2026-11-17T00:00:00.000Z' // the TV copy; upstream v0.1.6 was built 2026-10-03
     const COMPONENT = 'tor_updater'
     const FOLLOW_KEY = 'torrent_follow'
     const FOLLOW_VERSION = 1
@@ -438,7 +445,9 @@
         list: () => request('/torrents', { action: 'list' }, 8000),
         setViewed: (hash, fileIndex, timecode) => request('/viewed', {
             action: 'set', hash, file_index: fileIndex, timecode
-        }, 5000, 'text')
+        }, 5000, 'text'),
+        // every mark of a release (file_index -1 — as ru-torrents resets them at each start from Lampa)
+        remViewed: (hash) => request('/viewed', { action: 'rem', hash, file_index: -1 }, 5000, 'text')
     }
 
     async function waitForFiles(hash, timeoutMs = PROBE_TIMEOUT_MS) {
@@ -783,7 +792,8 @@
         return Object.assign({}, play, { file: now.id, eps })
     }
 
-    async function transferViewed(oldHash, newHash, oldMap, newMap) {
+    // `sent` — old file ids already carried (a Set, filled here): each mark goes once
+    async function transferViewed(oldHash, newHash, oldMap, newMap, sent) {
         let viewed = []
         try { viewed = await ts.viewed(oldHash) } catch (_) { return }
         if (!Array.isArray(viewed) || !viewed.length) return
@@ -794,18 +804,75 @@
         for (const mark of viewed) {
             const key = oldByIndex.get(Number(mark.file_index))
             const target = key && newMap.get(key)
-            if (!target || !mark.timecode) continue
-            try { await ts.setViewed(newHash, target.id, mark.timecode) } catch (_) {}
+            // tv fix 4: a mark TorrServer made by streaming has no timecode (timecode tracking is off on the TV); it is the
+            // fact «MX played this file by itself» that «Продолжить» goes by — skipped, the new release knew only the file
+            // started from Lampa, and «Продолжить» went back to it
+            if (!target || (sent && sent.has(Number(mark.file_index)))) continue
+            try {
+                await ts.setViewed(newHash, target.id, mark.timecode || 0)
+                if (sent) sent.add(Number(mark.file_index))
+            } catch (_) {}
         }
+    }
+
+    // a start record's episode list [[file id, season, episode]…] as an episode map. Both maps of a carry are built here
+    // together, so the keys only have to agree with each other
+    function mapFromEps(eps) {
+        const map = new Map()
+        ;(Array.isArray(eps) ? eps : []).forEach((e) => {
+            if (e && e[2] >= 1) map.set('S' + Number(e[1]) + 'E' + Number(e[2]), { id: e[0], season: e[1], episode: e[2] })
+        })
+        return map
+    }
+
+    // tv fix 5: the old release's list stays on screen after the replacement, and a file started from it is noted on the
+    // OLD release (ru-torrents' lampa_tv_play), as are the files MX streams from it. Before the old release is removed, a
+    // start made on it AFTER the replacement goes to the new one. Only such a start can keep the old release (→ a reason),
+    // and only when it has no place in the new one: a start made before the replacement was already carried by
+    // applyUpdate if it could be (a film's cannot — it must not hold the old release for ever).
+    // After a Lampa restart the episode maps are gone; they are rebuilt from the two start records' episode lists.
+    async function carryLatest(oldHash, newHash) {
+        const entry = runtime.pendingCleanup.get(oldHash) || {}
+        if (entry.newHash) newHash = entry.newHash
+        let old
+        try { old = await ts.get(oldHash) } catch (err) {
+            // gone already (404) → nothing to carry; any other failure: not now
+            return err && err.raw && err.raw.status === 404 ? '' : 'the old release cannot be read'
+        }
+        if (!newHash) return ''
+        const oldData = torrentData(old), play = oldData.lampa_tv_play
+        const replacedAt = entry.at || (oldData[FOLLOW_KEY] && oldData[FOLLOW_KEY].checked_at) || 0
+        let oldMap = entry.oldMap, newMap = entry.newMap
+        if (play && play.at > replacedAt) {
+            let fresh
+            try { fresh = await ts.get(newHash) } catch (_) { return 'the new release cannot be read' }
+            const data = torrentData(fresh), have = data.lampa_tv_play
+            if (play.at > ((have && have.at) || 0)) {
+                if (!oldMap) { oldMap = mapFromEps(play.eps); newMap = mapFromEps(have && have.eps) }
+                const carried = carryPlay(play, oldMap, newMap)
+                if (!carried) return 'its start is newer and has no place in the new release'
+                data.lampa_tv_play = carried
+                try { await ts.set(newHash, fresh, data) } catch (_) { return 'the start could not be written to the new release' }
+                // the new release's marks are of the session before that start (copied at the replacement): cleared, as
+                // ru-torrents clears them at every start — a later episode among them would be taken for «MX went on to it»
+                try { await ts.remViewed(newHash); if (entry.sent) entry.sent.clear() } catch (_) {}
+            }
+        }
+        if (oldMap && newMap) await transferViewed(oldHash, newHash, oldMap, newMap, entry.sent)
+        return ''
     }
 
     function hashBusy(hash) {
         return runtime.activePlayerHash === hash || runtime.listHash === hash
     }
 
-    async function cleanupOld(hash) {
+    async function cleanupOld(hash, newHash) {
         if (!hash || hashBusy(hash)) return false
         try {
+            const keep = await carryLatest(hash, newHash)
+            if (keep) { log('Superseded torrent kept:', keep, hash); return false }
+            // the carry took several requests: «Продолжить» or a player may have taken the release meanwhile
+            if (hashBusy(hash)) return false
             await ts.remove(hash)
             runtime.pendingCleanup.delete(hash)
             log('Removed superseded torrent', hash)
@@ -894,11 +961,12 @@
             category: meta.category || newStatus.category
         })
         await ts.set(newHash, mergedStatus, newData)
-        await transferViewed(oldHash, newHash, currentProbe.oldMap, currentProbe.newMap)
+        const sent = new Set()
+        await transferViewed(oldHash, newHash, currentProbe.oldMap, currentProbe.newMap, sent)
 
         try { await writeFollow(oldStatus, { superseded_by: newHash, checked_at: Date.now(), last_result: 'superseded' }) } catch (_) {}
 
-        runtime.pendingCleanup.set(oldHash, newHash)
+        runtime.pendingCleanup.set(oldHash, { newHash, oldMap: currentProbe.oldMap, newMap: currentProbe.newMap, at: Date.now(), sent })
         const activeComponent = currentComponent()
         if (!hashBusy(oldHash) && activeComponent !== 'mytorrents') await cleanupOld(oldHash)
 
@@ -941,8 +1009,11 @@
                 const data = torrentData(item)
                 const follow = data[FOLLOW_KEY]
                 const target = follow && String(follow.superseded_by || '').toLowerCase()
-                if (hash && target && hashes.has(target) && !hashBusy(hash)) {
-                    await cleanupOld(hash)
+                // tv fix 6: a release that is being streamed (1 getting info, 2 preload, 3 working) is in use — by MX, when
+                // Android reloaded Lampa's page behind it; removing it would cut the stream
+                const inUse = item.stat === 1 || item.stat === 2 || item.stat === 3
+                if (hash && target && hashes.has(target) && !hashBusy(hash) && !inUse) {
+                    await cleanupOld(hash, target)
                 }
             }
         } catch (error) {
@@ -1445,6 +1516,9 @@
         if (e.type === 'list_close') {
             const oldHash = runtime.listHash
             runtime.listHash = null
+            // not every Android WebView sends visibilitychange: the viewer closing a list means the external player is over
+            const L = lampa()
+            if (runtime.activePlayerHash && !(L && L.Player && L.Player.opened && L.Player.opened())) runtime.activePlayerHash = null
             if (oldHash && runtime.pendingCleanup.has(oldHash) && runtime.activePlayerHash !== oldHash) cleanupOld(oldHash)
             return
         }
@@ -1510,6 +1584,15 @@
         const old = runtime.activePlayerHash
         runtime.activePlayerHash = null
         if (old && runtime.pendingCleanup.has(old) && runtime.listHash !== old) cleanupOld(old)
+    }
+
+    // tv fix 6: an external player sends no 'destroy' — it is over when Lampa is on screen again. Without this the release
+    // MX played stayed «busy» for the rest of the session and its replaced copy was never removed
+    function onVisible() {
+        if (document.hidden || !runtime.activePlayerHash) return
+        const L = lampa()
+        if (L && L.Player && L.Player.opened && L.Player.opened()) return
+        onPlayerDestroy()
     }
 
 
@@ -1581,10 +1664,13 @@
         L.Listener.follow('torrent_file', onTorrentFile)
         L.Listener.follow('mytorrents', onMyTorrents)
         L.Listener.follow('activity', onActivity)
+        // tv fix 6: MX and other external players get 'external' (core launchExternalPlayer), never 'start'
         L.Player.listener.follow('start', onPlayerStart)
+        L.Player.listener.follow('external', onPlayerStart)
         L.Player.listener.follow('destroy', onPlayerDestroy)
 
         setTimeout(cleanupPersistedSuperseded, 2000)
+        document.addEventListener('visibilitychange', onVisible)
         log(`v${VERSION} installed`, BUILD_DATE)
     }
 

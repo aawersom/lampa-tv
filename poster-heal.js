@@ -14,17 +14,21 @@
  *      ran past the 15 s in the queue (2026-10-25 19:15, 20 «noload» in one millisecond);
  *    - those 15-s timeouts come a screen at a time (also back from the player or the screensaver: the timers ran
  *      while Lampa was frozen), so 8 errors of a host in 10 s only make it be checked with one small poster; it is
- *      set aside for 10 min, its posters going to the next host, only if that check fails. Every host is checked
- *      at start, when the network comes back and after a long absence.
+ *      set aside for 10 min, its posters going to the next host, only if that check fails — twice in a row: one
+ *      stalled connection is not a dead host. Every host is checked at start, when the network comes back and after
+ *      a long absence;
+ *    - a host set aside comes back only after it answered: when its 10 min are over it is checked again and stays
+ *      aside meanwhile (1.4.0 let the time run out — a dead host got half of the new posters back every 10 min).
  * 2) Heal. Posters loaded again — from every working host in turn, Cloudflare/OVH last — 3 s after a failure, when
  *    Lampa is visible again, when the network comes back, and every 30 s: the cards that gave up
  *    (`.card__img-broken`: region code + URL), and Lampa's retries still hanging 20 s after the last failure (a retry
- *    has no 15-s timer, it would never fail nor become a stub). At most 3 times a poster.
+ *    has no 15-s timer, it would never fail nor become a stub). At most 3 times a poster; when a host that was set
+ *    aside answers again, the posters given up on meanwhile get their tries again.
  */
 (function () {
     'use strict';
     if (window.lampa_tv_poster_heal) return;
-    window.lampa_tv_poster_heal = '1.4.0';
+    window.lampa_tv_poster_heal = '1.5.0';
 
     // ---- 1) hosts ----
     var CACHED = ['http://nl.imagetmdb.com/', 'http://de.imagetmdb.com/'];
@@ -36,7 +40,14 @@
     var https = function (list) { return location.protocol === 'https:' ? list.filter(function (h) { return h.indexOf('http:') !== 0; }) : list; };
 
     var down = {}, errors = {}, pick = {}, brokenAt = {}, checking = {};
-    var up = function (h) { return !(down[h] > Date.now()); };
+    // a host set aside comes back only after it answered a check: when its 10 min are over it is asked again and stays
+    // aside meanwhile. Just letting the time run out sent half of the new posters to a dead host every 10 min, each one
+    // waiting out Lampa's 15-s timer before its retry went elsewhere (de.imagetmdb.com, dead since 2026-11-16).
+    var up = function (h) {
+        if (!down[h]) return true;
+        if (down[h] <= Date.now() && !checking[h]) check([h]);
+        return !down[h];
+    };
     function hash(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); }
     function chain(p) { // the hosts for one poster in the order its tries go: its cacheable host, the other one, the backups
         var cached = https(CACHED), first = cached[hash(p) % cached.length];
@@ -53,27 +64,45 @@
         return m ? m[1].split('?')[0].replace(/\/+/g, '/') : '';
     }
 
-    // one small poster from each host: a host that answers is (back) in, one that does not is set aside for 10 min
+    // one small poster from each host: a host that answers is (back) in, one that fails twice in a row is set aside for
+    // 10 min. Twice: a single stalled connection is not a dead host (2026-11-16: ~40 % of connections through the
+    // router's tunnel hung), and setting a good host aside sends its posters to the backup without cache headers.
     function check(list) {
         (list || https(CACHED.concat(backup()))).forEach(function (host) {
             if (checking[host]) return;
             checking[host] = true;
-            var im = new Image();
-            var settle = function (ok) {
-                clearTimeout(t);
-                checking[host] = false;
-                if (ok) delete down[host];
-                else {
-                    if (up(host)) console.log('PosterHeal', 'host does not answer, set aside for 10 min:', host);
-                    down[host] = Date.now() + 10 * 60 * 1000;
-                }
+            var ask = function (again) {
+                var im = new Image(), settled = false;
+                var settle = function (ok) {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(t);
+                    if (!ok && again) return ask(false);
+                    checking[host] = false;
+                    if (ok) {
+                        var was = down[host];
+                        delete down[host];
+                        if (was) retryGivenUp();
+                    } else {
+                        if (!down[host]) console.log('PosterHeal', 'host does not answer, set aside for 10 min:', host);
+                        down[host] = Date.now() + 10 * 60 * 1000;
+                    }
+                };
+                var t = setTimeout(function () { im.src = ''; settle(false); }, 8000);
+                im.onload = function () { settle(im.naturalWidth > 0); };
+                im.onerror = function () { settle(false); };
+                im.src = host + 't/p/w92/1sIAsLSaMwm3mb7Y6jISMv56McR.jpg?r=' + Date.now();
             };
-            var t = setTimeout(function () { im.src = ''; settle(false); }, 8000);
-            im.onload = function () { settle(im.naturalWidth > 0); };
-            im.onerror = function () { settle(false); };
-            im.src = host + 't/p/w92/1sIAsLSaMwm3mb7Y6jISMv56McR.jpg?r=' + Date.now();
+            ask(true);
         });
         if (!list) checkedAt = Date.now();
+    }
+    // a host is back: the posters that used up their 3 tries while the hosts were out (an outage longer than a few
+    // minutes left stubs until the screen was rebuilt) get their tries again
+    function retryGivenUp() {
+        Array.prototype.forEach.call(document.querySelectorAll('.card__img'), function (img) { if (img.__heal) img.__heal = 0; });
+        clearTimeout(healSoon);
+        healSoon = setTimeout(heal, 2000);
     }
     var checkedAt = 0, healSoon;
 

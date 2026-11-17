@@ -19,7 +19,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_tmdb_route) return;
-    window.lampa_tv_tmdb_route = '1.3.0';
+    window.lampa_tv_tmdb_route = '1.3.1';
 
     var KEY = 'lampa_tv_tmdb_route';
     var TMDB_API = /^https?:\/\/(api\.themoviedb\.org\/3|apitmdb\.[^\/]+\/3|lampa\.byskaz\.ru\/tmdb\/api\/3|tmdb-api\.rootu\.top\/3|tmdbapi\.bylampa\.online\/3)\//;
@@ -82,22 +82,33 @@
         var cubFull = cub.full;
         cub.full = function (params, oncomplite, onerror) {
             var self = this, tries = 0;
-            var fail = function () {
-                if (++tries < 2) return attempt();
+            var fail = function (silent) {
+                if (!silent && ++tries < 2) return attempt();
                 var tmdb = Lampa.Api.sources.tmdb;
-                console.log('TmdbRoute', 'CUB card failed twice, from TMDB:', params && params.method, params && params.id);
+                console.log('TmdbRoute', silent ? 'CUB card not complete in 10 s, from TMDB:' : 'CUB card failed twice, from TMDB:', params && params.method, params && params.id);
                 if (tmdb && typeof tmdb.full === 'function') tmdb.full(Object.assign({}, params, { source: 'tmdb' }), oncomplite, onerror);
                 else onerror();
             };
             function attempt() {
                 var settled = false;
+                // a connection that hangs is not answered by an error: the core waits its 30 s, twice with the retry. A card
+                // not complete in 10 s comes from TMDB at once — asking CUB again would only repeat the wait. The 10 s
+                // cover the whole card (the core completes it when all its parts are in), so a card whose main part came
+                // and a side part hangs is taken from TMDB too, without CUB's extras: the price of not waiting 30–60 s.
+                var guard = setTimeout(function () {
+                    if (settled) return;
+                    settled = true;
+                    fail(true);
+                }, 10000);
                 cubFull.call(self, params, function (data) {
                     if (settled) return;
                     settled = true;
+                    clearTimeout(guard);
                     if (data && data.movie) oncomplite.apply(this, arguments); else fail();
                 }, function () {
                     if (settled) return;
                     settled = true;
+                    clearTimeout(guard);
                     fail();
                 });
             }

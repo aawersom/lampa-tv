@@ -12,7 +12,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_imdb_filter) return;
-    window.lampa_tv_imdb_filter = '1.0.3';
+    window.lampa_tv_imdb_filter = '1.0.4';
 
     var SOURCE = 'imdb_filter';
     var PAGE = 20;
@@ -101,6 +101,17 @@
             'edges { node { title { id titleText { text } ratingsSummary { aggregateRating } } } } } }';
         var net = new Lampa.Reguest();
         net.timeout(15000);
+        // Lampa's native request can lose its callback (two requests drawing the same slot of 5000 — see imdb-ratings), and
+        // a connection can hang: without an end of its own the page stayed in `waiting` and that filter page kept
+        // «loading» until Lampa was restarted. One result per request, 20 s at most.
+        var settled = false, finish = done;
+        done = function (res) {
+            if (settled) return;
+            settled = true;
+            clearTimeout(guard);
+            finish(res);
+        };
+        var guard = setTimeout(function () { console.log('ImdbFilter', 'no answer from IMDb in 20 s'); done(null); }, 20000);
         // IMDb answers only its own site in a browser (CORS); Lampa's native request has no such limit
         net['native'](IMDB, function (json) {
             try {

@@ -1,0 +1,11 @@
+#!/bin/sh
+# a push is the deploy to the TV: nothing goes out unless every plugin parses and every test passes.
+# The check runs on the files on disk, so they must be what is being pushed: uncommitted changes stop the push.
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+if [ -n "$(git status --porcelain -- '*.js' test check.sh .githooks)" ]; then
+  echo "pre-push: uncommitted or untracked changes in the plugins or tests - the check would not test what is pushed"
+  git status --short -- '*.js' test check.sh .githooks
+  exit 1
+fi
+exec sh "$root/check.sh"

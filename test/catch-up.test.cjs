@@ -102,4 +102,9 @@ check('a film / a release without a start record → nothing', [w.updates.length
 w = world([{ hash: 'abc', movie: GOT, play }], { abc: [51, 52, 53] }, {}, {}, true);
 w.api.catchUp();
 check('no quick-start → nothing, TorrServer not even asked', [w.updates.length, w.writes, w.asked], [0, [], []]);
+// started S6E4 (file 54), MX went on to S6E5; S6E2 was streamed too (looked into earlier in MX, or stepped back to) —
+// it lies BEFORE the start: MX did not «go past» it, it stays as Lampa has it
+w = world([{ hash: 'abc', movie: GOT, play: { file: 54, at: 500, eps: EPS } }], { abc: [52, 54, 55] }, { [mark(2)]: { percent: 10, time: 300, updated: 100 } }, {});
+w.api.catchUp();
+check('an episode streamed BEFORE the started one is not marked watched; the started one is', marked(w), [['h:64', 100, 'tv_1399', 6, 4]]);
 process.exitCode = failed ? 1 : 0;

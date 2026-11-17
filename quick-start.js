@@ -28,7 +28,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_quick_start) return;
-    window.lampa_tv_quick_start = '1.14.0';
+    window.lampa_tv_quick_start = '1.14.1';
 
     var BUFFER_SECONDS = 10;
     var MIN_BYTES = 3 * 1024 * 1024;
@@ -61,6 +61,10 @@
     // The episode «Продолжить» plays: the choice only, no side effects — ru-torrents labels the button with it, so the
     // label and the play are one decision.
     function pickEpisode(list, play) {
+        // rows the core gave no episode number (extras, a sample, a bonus film) are not episodes: «the next one» and «the
+        // first one» must not land on them. A release whose names the core did not recognise at all keeps every row.
+        var numbered = list.filter(function (r) { return r.element.episode; });
+        if (numbered.length) list = numbered;
         // the episode watched LAST (timeline `updated`), unfinished → it, finished → the next one. Not the first unfinished
         // one: an old half-watched episode pulled the viewer back (owner, 2026-10-18: E01 at 4 % reopened after E04–E05).
         var target = null, last = null, lastWatched = -1;

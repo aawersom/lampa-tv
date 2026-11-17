@@ -30,7 +30,7 @@
 (function () {
     'use strict';
     if (window.lampa_tv_ru_torrents) return;
-    window.lampa_tv_ru_torrents = '1.26.0';
+    window.lampa_tv_ru_torrents = '1.27.0';
 
     var RANK = 'RuRank';
     var FOREIGN = ['piratebay', 'pirate bay', 'yts', 'knaben', '1337x', 'eztv', 'rarbg', 'torrentgalaxy', 'tgx',
@@ -301,6 +301,12 @@
         });
         return started || newest;
     }
+    // TorrServer's process can die (Android takes its memory) while its app lives on and does not restart it. The viewer
+    // is told what to do; the line in the log tells later why a start or «Продолжить» went wrong.
+    function serverSilent(what) {
+        console.log('RuTorrents', 'TorrServer does not answer:', what);
+        if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show('TorrServer не отвечает. Откройте приложение TorrServe и вернитесь в Lampa.');
+    }
     function continueRelease(card, done, none) {
         var url = Lampa.Torserver && Lampa.Torserver.url && Lampa.Torserver.url();
         if (!url || !card || !card.id) return none && none();
@@ -321,11 +327,11 @@
         net.timeout(5000);
         net.silent(base + '/torrents', function (list) {
             var t = (Array.isArray(list) ? list : []).filter(function (x) { return String(x.hash).toLowerCase() === hash; })[0];
-            if (!t) return;
+            if (!t) return console.log('RuTorrents', 'start not noted: the release is not in TorrServer', hash.slice(0, 8), 'file', file);
             var data = torrentData(t);
             data[PLAY_KEY] = { file: file, at: Date.now(), eps: (playlist || []).filter(function (p) { return p && p.episode; }).map(function (p) { return [p.id, p.season, p.episode]; }) };
-            net.silent(base + '/torrents', function () {}, function () {}, JSON.stringify({ action: 'set', hash: t.hash, title: t.title || '', poster: t.poster || '', category: t.category || '', data: JSON.stringify(data) }), { dataType: 'text' });
-        }, function () {}, JSON.stringify({ action: 'list' }));
+            net.silent(base + '/torrents', function () {}, function () { console.log('RuTorrents', 'start not noted: TorrServer refused the write', hash.slice(0, 8), 'file', file); }, JSON.stringify({ action: 'set', hash: t.hash, title: t.title || '', poster: t.poster || '', category: t.category || '', data: JSON.stringify(data) }), { dataType: 'text' });
+        }, function () { console.log('RuTorrents', 'start not noted: TorrServer does not answer', hash.slice(0, 8), 'file', file); }, JSON.stringify({ action: 'list' }));
     }
 
     // files TorrServer streamed of a release since its last start from Lampa (the list is reset at every start)
@@ -382,8 +388,11 @@
     function catchUpCard(card, rec, opened) {
         var rows = episodeRows(card, rec), target = window.lampa_tv_pick_episode(rows, { file: rec.file, at: rec.at, opened: opened }).target;
         if (!target) return;
-        var played = opened.concat([rec.file]), passed = [];
-        rows.slice(0, rows.indexOf(target)).forEach(function (r) {
+        // «went past» = from the started episode up to the target. A streamed episode BEFORE the start (looked into, or
+        // stepped back to in MX) was not passed: it stays as Lampa has it.
+        var played = opened.concat([rec.file]), passed = [], from = 0;
+        rows.forEach(function (r, i) { if (r.element.id === rec.file) from = i; });
+        rows.slice(from, rows.indexOf(target)).forEach(function (r) {
             var v = r.element.timeline;
             if (played.indexOf(r.element.id) < 0 || (v.percent || 0) >= 90 || (v.updated || 0) >= rec.at) return;
             v.percent = 100;
@@ -441,7 +450,12 @@
                         busy = 0; // the core's loading screen has the remote now
                     });
                 };
-                continueRelease(card, start, function () { start(hash, t0, rec0); });
+                // TorrServer silent at the press: opening would only show the core's loader for 90 s and «timeout»
+                continueRelease(card, start, function (silent) {
+                    if (!silent) return start(hash, t0, rec0);
+                    busy = 0;
+                    serverSilent('«Продолжить» ' + card.id);
+                });
             });
             play.after(btn);
             // the card's buttons are collected when it gets the focus; this one comes later

@@ -63,4 +63,11 @@ check('film collection, nothing remembered → list stays', [big(1, 4e9), big(2,
 { const fresh2 = [ep('E2', 30, 700), ep('E3', 0, 0)]; fresh2[0].element.timeline.time = 600;
   check('fresh mark (left MX with «Назад»): plays E2', fresh2, cont('E2', 500, ['E2']), 'E2', 'E2');
   const ok = fresh2[0].element.timeline.time === 600; if (!ok) failed++; console.log((ok ? 'ok   ' : 'FAIL ') + 'fresh mark keeps its time'); }
+// a release with extras: rows the core gave no episode number (episode 0 — «Extras/…», a sample, a bonus film). «The next
+// one» and «the first one» are episodes, not rows
+const extra = (name, percent, updated) => { const r = ep(name, percent, updated); r.element.episode = 0; return r; };
+check('nothing watched: the first EPISODE, not the extras row before it', [extra('Extras'), ep('E1', 0, 0), ep('E2', 0, 0)], series, 'E1', null);
+check('the last episode finished, a bonus row follows → nothing to continue', [ep('E1', 100, 100), ep('E2', 95, 300), extra('Bonus')], series, null, null);
+check('«Продолжить»: E1 finished, a sample row sits between → plays E2', [ep('E1', 95, 300), extra('Sample'), ep('E2', 0, 0)], cont('E1', 200, ['E1']), 'E2', 'E2');
+check('no row has an episode number (names not recognised) → all rows, as before', [extra('A', 95, 300), extra('B', 0, 0)], series, 'B', null);
 process.exitCode = failed ? 1 : 0;

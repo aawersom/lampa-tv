@@ -8,9 +8,10 @@ the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa k
 parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
-Versions (2026-11-10, Lampa core 3.4.6): ru-torrents 1.26.0, similar 1.1.2, quick-start 1.14.0, no-dmca 1.1.0, poster-heal 1.4.0,
-no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.0, catalog-next 1.6.2, tor-updater 0.1.6-tv.3, imdb-filter 1.0.3.
-Tests: `for f in test/*.cjs; do node $f; done`.
+Versions (2026-11-17, Lampa core 3.4.7): ru-torrents 1.27.0, similar 1.1.2, quick-start 1.14.1, no-dmca 1.1.0, poster-heal 1.5.0,
+no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.1, catalog-next 1.6.2, tor-updater 0.1.6-tv.4, imdb-filter 1.0.4.
+Check before every push (a push is the deploy to the TV): `sh check.sh` — the syntax of every plugin, then every test; a
+non-zero exit names what failed. `git config core.hooksPath .githooks` (once per clone) runs it on `git push`.
 
 - `ru-torrents.js` — torrent list (nothing hidden, each release ranked on its own):
   whatever sort is chosen in «Сортировать», Russian releases come first, then the rest; inside each group
@@ -51,8 +52,8 @@ Tests: `for f in test/*.cjs; do node $f; done`.
   is replaced with the card details from TMDB); the LGBT filter is off (its list is never loaded).
 - `poster-heal.js` — each poster always from one of two hosts that let the WebView cache it for a year (nl/de.imagetmdb.com, chosen by
   the poster path, half each — twice the connections, repeat showings from the disk cache); every retry of a poster goes to the next working
-  host (the other of nl/de, lampa.byskaz.ru, CUB), never the same twice; a host is set aside for 10 min only when 8 errors in 10 s *and* a
-  check with one poster fail; posters Lampa gave up on, or whose retry hangs, are loaded again 3 s after a failure, on return, on network
+  host (the other of nl/de, lampa.byskaz.ru, CUB), never the same twice; a host is set aside for 10 min only when 8 errors in 10 s *and* two
+  checks with one poster in a row fail, and comes back only after it answered a check; posters Lampa gave up on, or whose retry hangs, are loaded again 3 s after a failure, on return, on network
   return and every 30 s (Cloudflare/OVH hosts only there, last).
 - `no-tv-channels.js` — Lampa stops asking the app to rebuild its Android TV home-screen rows (the app bridge's
   `updateChannel` is muted, every other bridge call passes); the app's 15-minute timer is stopped separately (appops).
@@ -67,12 +68,16 @@ Tests: `for f in test/*.cjs; do node $f; done`.
   within 6 rows of the last loaded row (fixes Lampa's list stalling at the end of page 1 when scrolled through quickly:
   its scroll asks for a page only when it moves, and ignores the first second); a title CUB sends again on a later page is not shown twice. Main page: own «Продолжить просмотр» first, Lampa's copy and the IPTV channels row of the same title dropped; «Огонь!» goes on after CUB's 100 titles with TMDB's popular well-rated ones of the last years (~650 films / ~650 series); «Рекомендуем посмотреть» keeps 600 recommendations instead of Lampa's 100 and fills them for the whole history after start; search puts the exact title first.
 - `tor-updater.js` — a copy of WatherMG's [Lampa Tor Updater](https://github.com/WatherMG/lampa-tor-updater) v0.1.6 (MIT), used instead of
-  the original, with three fixes. `episodeMap`: the original deep-copied Lampa's episode-list files through JSON; each file carries the card and the
+  the original, with six fixes. `episodeMap`: the original deep-copied Lampa's episode-list files through JSON; each file carries the card and the
   shared playlist (every entry with the card again), so a 73-episode list became tens of MB of JSON and the WebView renderer crashed ~3 s after
   the list opened. Now only id/path/length are copied. `writeFollow`: the update check (every 6 h per release, when its list opens) wrote the
   torrent's data it had read before searching the parsers, dropping the start ru-torrents noted there meanwhile (`node test/tor-updater-follow.test.cjs`);
   now it writes into the data TorrServer has at that moment. `applyUpdate` (a release replaced by its update): the start record goes to the
-  new torrent read at that moment, its file ids moved by season/episode (`node test/tor-updater-play.test.cjs`). If upstream fixes all three, go back to the original URL.
+  new torrent read at that moment, its file ids moved by season/episode (`node test/tor-updater-play.test.cjs`). `transferViewed`: the files MX streamed by
+  itself (TorrServer marks without a timecode) go to the new release too — «Продолжить» goes by them. `carryLatest`: a start made from the
+  old release's list after the replacement is carried before the old release is removed; a start with no place in the new release keeps
+  the old one. A release in use is not removed (MX sends 'external', not 'start'; at Lampa start a release being streamed stays)
+  (`node test/tor-updater-replace.test.cjs`). If upstream fixes all six, go back to the original URL.
 - `imdb-filter.js` — Lampa's «Фильтр» by IMDb: CUB filters by the TMDB rating and only «от 8» works there (от 6/7 return everything,
   ranges are ignored; 2023 «от 8» = 17 films), while tiles and the card show IMDb. The filter runs on IMDb's advanced search (IMDb rating,
   votes, release dates, genres, original language, title type; by popularity, «В топе» = best rated with ≥ 25 000 votes, «Новинки» = newest
