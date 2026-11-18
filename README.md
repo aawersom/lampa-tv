@@ -8,7 +8,7 @@ the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa k
 parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
-Versions (2026-11-17, Lampa core 3.4.7): ru-torrents 1.27.0, similar 1.1.2, quick-start 1.14.1, no-dmca 1.1.0, poster-heal 1.5.0,
+Versions (2026-11-17, Lampa core 3.4.7): ru-torrents 1.27.0, similar 1.1.2, quick-start 1.14.1, no-dmca 1.2.0, poster-heal 1.5.0,
 no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.1, catalog-next 1.6.2, tor-updater 0.1.6-tv.4, imdb-filter 1.0.4.
 Check before every push (a push is the deploy to the TV): `sh check.sh` — the syntax of every plugin, then every test; a
 non-zero exit names what failed. `git config core.hooksPath .githooks` (once per clone) runs it on `git push`.
@@ -50,6 +50,11 @@ non-zero exit names what failed. `git config core.hooksPath .githooks` (once per
   opens cards again (Lampa 3.4's panel screen is bypassed). The screensaver's video releases the hardware decoder when it stops.
 - `no-dmca.js` — no content restrictions: cards blocked «по требованию правообладателя» open (Lampa's blocked-id list is ignored, a CUB stub
   is replaced with the card details from TMDB); the LGBT filter is off (its list is never loaded).
+  1.2.0 — CUB's ads: before a video that is not a torrent the core plays CUB's pre-roll adverts (and banners in its own
+  player); its own switches are read-only for plugins and the ad list is loaded before they run, so a request from Lampa's page to a
+  host named in CUB's ad lists (`/api/ad/get/preroll`, `/banner`) is sent to a closed local port and fails at once — the core's error
+  path starts the video. The 3.8-s «Реклама» splash stays. Not reached: adverts marked `vast_api: 3` (Google IMA frame)
+  (`node test/no-ads.test.cjs`).
 - `poster-heal.js` — each poster always from one of two hosts that let the WebView cache it for a year (nl/de.imagetmdb.com, chosen by
   the poster path, half each — twice the connections, repeat showings from the disk cache); every retry of a poster goes to the next working
   host (the other of nl/de, lampa.byskaz.ru, CUB), never the same twice; a host is set aside for 10 min only when 8 errors in 10 s *and* two
