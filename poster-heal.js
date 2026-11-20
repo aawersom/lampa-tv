@@ -5,12 +5,15 @@
  *    imagetmdb.com; 12 posters each, curl on the TV, 2026-10-24). What did work, 12 of 12 even 12 at once:
  *    lampa.byskaz.ru/tmdb/img 0.07 s, nl.imagetmdb.com 0.3 s, de.imagetmdb.com 0.4 s, imagetmdb.<cub> 10 of 12.
  *    nl, de and CUB send `Cache-Control: max-age=31919000`, byskaz sends no cache headers at all: with byskaz picked
- *    as «fastest» (1.1–1.3) the WebView fetched every poster again on every screen. So:
- *    - each poster always comes from the same cacheable host — nl or de by a hash of its path, half each: twice the
+ *    as «fastest» (1.1–1.3) the WebView fetched every poster again on every screen.
+ *    2026-11-20 (1.6.0) the line changed: nl.imagetmdb.com connects but never answers (cut on the line; 200 through a
+ *    VPN), de is dead since 11-16, pl takes 15 s; CUB's mirror (imagetmdb.<cub_domain>) 0.39 s and imagetmdb.com 0.54 s
+ *    for 12 posters at once, both cacheable. So:
+ *    - each poster always comes from the same cacheable host — CUB's mirror or imagetmdb.com by a hash of its path, half each: twice the
  *      connections (the WebView opens 6 per host) and the next showing comes from the disk cache;
  *    - Lampa gives a poster's first load 15 s, then asks for it again 2 s after each failure (components/card, up to
  *      4 tries): every new try of the same poster goes to the next working host after the one that failed — the other
- *      of nl/de, byskaz, CUB — never the same host twice in a row. A screen of 30–40 posters on a line a torrent fills
+ *      cacheable one, byskaz — never the same host twice in a row. A screen of 30–40 posters on a line a torrent fills
  *      ran past the 15 s in the queue (2026-10-25 19:15, 20 «noload» in one millisecond);
  *    - those 15-s timeouts come a screen at a time (also back from the player or the screensaver: the timers ran
  *      while Lampa was frozen), so 8 errors of a host in 10 s only make it be checked with one small poster; it is
@@ -19,7 +22,7 @@
  *      a long absence;
  *    - a host set aside comes back only after it answered: when its 10 min are over it is checked again and stays
  *      aside meanwhile (1.4.0 let the time run out — a dead host got half of the new posters back every 10 min).
- * 2) Heal. Posters loaded again — from every working host in turn, Cloudflare/OVH last — 3 s after a failure, when
+ * 2) Heal. Posters loaded again — from every working host in turn, nl/de/pl/image.tmdb.org last — 3 s after a failure, when
  *    Lampa is visible again, when the network comes back, and every 30 s: the cards that gave up
  *    (`.card__img-broken`: region code + URL), and Lampa's retries still hanging 20 s after the last failure (a retry
  *    has no 15-s timer, it would never fail nor become a stub). At most 3 times a poster; when a host that was set
@@ -28,15 +31,17 @@
 (function () {
     'use strict';
     if (window.lampa_tv_poster_heal) return;
-    window.lampa_tv_poster_heal = '1.5.0';
+    window.lampa_tv_poster_heal = '1.6.0';
 
     // ---- 1) hosts ----
-    var CACHED = ['http://nl.imagetmdb.com/', 'http://de.imagetmdb.com/'];
-    function backup() {
+    // 2026-11-20 from the TV's line: nl.imagetmdb.com connects but never answers (cut on the line), de is dead since
+    // 11-16, pl 15 s a poster; CUB's mirror 0.39 s and imagetmdb.com 0.54 s for 12 posters at once, both cacheable
+    function cacheable() { // CUB's host follows Lampa's current mirror
         var cub = (window.Lampa && Lampa.Manifest && Lampa.Manifest.cub_domain) || 'cub.black';
-        return ['http://lampa.byskaz.ru/tmdb/img/', 'https://imagetmdb.' + cub + '/'];
+        return ['https://imagetmdb.' + cub + '/', 'http://imagetmdb.com/'];
     }
-    var LAST = ['http://pl.imagetmdb.com/', 'http://imagetmdb.com/', 'https://image.tmdb.org/']; // heal only
+    function backup() { return ['http://lampa.byskaz.ru/tmdb/img/']; }
+    var LAST = ['http://nl.imagetmdb.com/', 'http://de.imagetmdb.com/', 'http://pl.imagetmdb.com/', 'https://image.tmdb.org/']; // heal only
     var https = function (list) { return location.protocol === 'https:' ? list.filter(function (h) { return h.indexOf('http:') !== 0; }) : list; };
 
     var down = {}, errors = {}, pick = {}, brokenAt = {}, checking = {};
@@ -50,7 +55,7 @@
     };
     function hash(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); }
     function chain(p) { // the hosts for one poster in the order its tries go: its cacheable host, the other one, the backups
-        var cached = https(CACHED), first = cached[hash(p) % cached.length];
+        var cached = https(cacheable()), first = cached[hash(p) % cached.length];
         return (first ? [first] : []).concat(cached.filter(function (h) { return h !== first; }), https(backup()));
     }
     function firstUp(list) { return list.filter(up)[0] || list[0]; }
@@ -68,7 +73,7 @@
     // 10 min. Twice: a single stalled connection is not a dead host (2026-11-16: ~40 % of connections through the
     // router's tunnel hung), and setting a good host aside sends its posters to the backup without cache headers.
     function check(list) {
-        (list || https(CACHED.concat(backup()))).forEach(function (host) {
+        (list || https(cacheable().concat(backup()))).forEach(function (host) {
             if (checking[host]) return;
             checking[host] = true;
             var ask = function (again) {
@@ -119,7 +124,7 @@
         var broken = Lampa.TMDB.broken;
         Lampa.TMDB.broken = function (url) {
             var src = String(url || ''), p = path(src), now = Date.now();
-            var host = https(CACHED.concat(backup())).filter(function (h) { return src.indexOf(h) === 0; })[0];
+            var host = https(cacheable().concat(backup())).filter(function (h) { return src.indexOf(h) === 0; })[0];
             if (p) {
                 pick[p] = after(p, host); // Lampa's next try of this poster goes to the next host
                 brokenAt[p] = now;

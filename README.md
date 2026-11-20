@@ -8,7 +8,7 @@ the Kinopoisk rating was removed with the ko3ik ratings plugin instead). Lampa k
 parameter, so a pushed change reaches the TV at its next Lampa start (GitHub Pages deploys in about a minute).
 A copy of every plugin on the TV, these included, is kept in `D:\Works\lampa-plugins-mirror`.
 
-Versions (2026-11-17, Lampa core 3.4.7): ru-torrents 1.27.0, similar 1.1.2, quick-start 1.14.1, no-dmca 1.2.0, poster-heal 1.5.0,
+Versions (2026-11-17, Lampa core 3.4.7): ru-torrents 1.27.0, similar 1.1.2, quick-start 1.14.1, no-dmca 1.2.0, poster-heal 1.6.0,
 no-tv-channels 1.0.0, imdb-ratings 1.5.0, tmdb-route 1.3.1, catalog-next 1.6.2, tor-updater 0.1.6-tv.4, imdb-filter 1.0.4.
 Check before every push (a push is the deploy to the TV): `sh check.sh` — the syntax of every plugin, then every test; a
 non-zero exit names what failed. `git config core.hooksPath .githooks` (once per clone) runs it on `git push`.
@@ -55,11 +55,11 @@ non-zero exit names what failed. `git config core.hooksPath .githooks` (once per
   host named in CUB's ad lists (`/api/ad/get/preroll`, `/banner`) is sent to a closed local port and fails at once — the core's error
   path starts the video. The 3.8-s «Реклама» splash stays. Not reached: adverts marked `vast_api: 3` (Google IMA frame)
   (`node test/no-ads.test.cjs`).
-- `poster-heal.js` — each poster always from one of two hosts that let the WebView cache it for a year (nl/de.imagetmdb.com, chosen by
+- `poster-heal.js` — each poster always from one of two hosts that let the WebView cache it for a year (CUB's mirror imagetmdb.<cub_domain> and imagetmdb.com since 1.6.0 — nl.imagetmdb.com is cut on the TV line, de dead; chosen by
   the poster path, half each — twice the connections, repeat showings from the disk cache); every retry of a poster goes to the next working
-  host (the other of nl/de, lampa.byskaz.ru, CUB), never the same twice; a host is set aside for 10 min only when 8 errors in 10 s *and* two
+  host (the other cacheable one, lampa.byskaz.ru), never the same twice; a host is set aside for 10 min only when 8 errors in 10 s *and* two
   checks with one poster in a row fail, and comes back only after it answered a check; posters Lampa gave up on, or whose retry hangs, are loaded again 3 s after a failure, on return, on network
-  return and every 30 s (Cloudflare/OVH hosts only there, last).
+  return and every 30 s (nl/de/pl.imagetmdb.com and image.tmdb.org only there, last).
 - `no-tv-channels.js` — Lampa stops asking the app to rebuild its Android TV home-screen rows (the app bridge's
   `updateChannel` is muted, every other bridge call passes); the app's 15-minute timer is stopped separately (appops).
 - `imdb-ratings.js` — poster tiles show the IMDb rating instead of TMDB (asked from IMDb by imdb_id, a row of tiles per request, once more 3 s later if IMDb is silent, no OMDb; TMDB external_ids
